@@ -1,0 +1,28 @@
+-- 1. データベースの作成
+CREATE DATABASE IF NOT EXISTS bbs_db CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+
+USE bbs_db;
+
+-- 2. テーブルの作成
+CREATE TABLE IF NOT EXISTS posts (
+id INT AUTO_INCREMENT PRIMARY KEY,
+nickname VARCHAR(50) NOT NULL,
+message TEXT NOT NULL,
+media_path VARCHAR(255) DEFAULT NULL, -- ファイル保存パス
+media_type VARCHAR(50) DEFAULT NULL,  -- 'image' または 'video'
+created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- 3. テストデータの挿入
+INSERT INTO posts (nickname, message) VALUES
+('管理者', '掲示板へようこそ！画像や動画も投稿できるようになりました。'),
+('テストユーザー', 'これはテキストのみのテスト投稿です。');
+
+
+
+-- 既存のテーブルにカラムを追加
+ALTER TABLE posts ADD COLUMN likes_count INT DEFAULT 0;
+ALTER TABLE posts ADD COLUMN parent_id INT DEFAULT NULL; -- 引用元の投稿ID
+
+-- 外部キー制約（引用元の投稿が消えたらNULLにする設定）
+ALTER TABLE posts ADD CONSTRAINT fk_parent_post FOREIGN KEY (parent_id) R
