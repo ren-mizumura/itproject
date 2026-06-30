@@ -1,166 +1,229 @@
--- データベースの作成（存在しない場合）
-CREATE DATABASE IF NOT EXISTS `devlms` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
-USE `devlms`;
+-- ==========================================
+-- ユーザ管理機能付き掲示板 データベース設計 (MySQL)
+-- ==========================================
+
+-- データベースの作成 (存在しない場合)
+CREATE DATABASE IF NOT EXISTS `ipro_20260630` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+USE `ipro_20260630`;
+
+-- テーブル削除 (初期化用)
+DROP TABLE IF EXISTS `notifications`;
+DROP TABLE IF EXISTS `replies`;
+DROP TABLE IF EXISTS `post_visibilities`;
+DROP TABLE IF EXISTS `posts`;
+DROP TABLE IF EXISTS `student_progress`;
+DROP TABLE IF EXISTS `student_curriculums`;
+DROP TABLE IF EXISTS `curriculum_tasks`;
+DROP TABLE IF EXISTS `curriculums`;
+DROP TABLE IF EXISTS `friendships`;
+DROP TABLE IF EXISTS `users`;
 
 -- 1. ユーザーテーブル
-CREATE TABLE IF NOT EXISTS `users` (
-    `id` VARCHAR(50) NOT NULL,
-    `name` VARCHAR(100) NOT NULL,
-    `password_hash` VARCHAR(255) NOT NULL,
-    `role` ENUM('student', 'teacher') NOT NULL DEFAULT 'student',
-    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`)
+CREATE TABLE `users` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `username` VARCHAR(50) NOT NULL UNIQUE COMMENT 'ユーザーID（ログイン用）',
+  `display_name` VARCHAR(100) NOT NULL COMMENT '表示名',
+  `password_hash` VARCHAR(255) NOT NULL COMMENT 'ハッシュ化されたパスワード',
+  `role` ENUM('student', 'teacher') NOT NULL DEFAULT 'student' COMMENT '権限（生徒/先生）',
+  `invite_token` VARCHAR(64) UNIQUE NULL COMMENT '専用招待URL用トークン',
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 2. カリキュラム（言語と詳細タスク）テーブル
-CREATE TABLE IF NOT EXISTS `curriculums` (
-    `id` INT AUTO_INCREMENT NOT NULL,
-    `language` VARCHAR(100) NOT NULL,
-    `task` VARCHAR(100) NOT NULL,
-    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `unique_lang_task` (`language`, `task`)
+-- 2. 友達・属性紐付けテーブル
+CREATE TABLE `friendships` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `user_id` INT NOT NULL COMMENT '設定を行ったユーザーID',
+  `friend_id` INT NOT NULL COMMENT '対象のユーザーID',
+  `attribute_tag` VARCHAR(50) NOT NULL DEFAULT '友達' COMMENT '属性タグ（「友達」「グループA」など）',
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`friend_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+  UNIQUE KEY `unique_friend_relation` (`user_id`, `friend_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 3. 生徒が受講する学習言語の紐付けテーブル
-CREATE TABLE IF NOT EXISTS `student_languages` (
-    `student_id` VARCHAR(50) NOT NULL,
-    `language` VARCHAR(100) NOT NULL,
-    PRIMARY KEY (`student_id`, `language`),
-    FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+-- 3. カリキュラム（プログラミング言語マスター）
+CREATE TABLE `curriculums` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `name` VARCHAR(100) NOT NULL UNIQUE COMMENT '言語名（例: PHP）',
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 4. 生徒のカリキュラム進捗・習熟度評価テーブル
-CREATE TABLE IF NOT EXISTS `progress` (
-    `student_id` VARCHAR(50) NOT NULL,
-    `language` VARCHAR(100) NOT NULL,
-    `task` VARCHAR(100) NOT NULL,
-    `percent` INT NOT NULL DEFAULT 0,
-    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (`student_id`, `language`, `task`),
-    FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+-- 4. カリキュラム詳細タスク
+CREATE TABLE `curriculum_tasks` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `curriculum_id` INT NOT NULL COMMENT 'カリキュラム言語ID',
+  `task_name` VARCHAR(150) NOT NULL COMMENT '詳細学習タスク名（例: 関数）',
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`curriculum_id`) REFERENCES `curriculums`(`id`) ON DELETE CASCADE,
+  UNIQUE KEY `unique_curriculum_task` (`curriculum_id`, `task_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 5. つながり（友達・属性）テーブル
-CREATE TABLE IF NOT EXISTS `friendships` (
-    `from_user_id` VARCHAR(50) NOT NULL,
-    `to_user_id` VARCHAR(50) NOT NULL,
-    `tag` VARCHAR(50) NOT NULL DEFAULT '友達',
-    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (`from_user_id`, `to_user_id`),
-    FOREIGN KEY (`from_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
-    FOREIGN KEY (`to_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+-- 5. 生徒学習対象登録テーブル
+CREATE TABLE `student_curriculums` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `student_id` INT NOT NULL COMMENT '生徒ユーザーID',
+  `curriculum_id` INT NOT NULL COMMENT '選択した言語ID',
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`student_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`curriculum_id`) REFERENCES `curriculums`(`id`) ON DELETE CASCADE,
+  UNIQUE KEY `unique_student_curriculum` (`student_id`, `curriculum_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 6. 掲示板投稿テーブル
-CREATE TABLE IF NOT EXISTS `posts` (
-    `id` INT AUTO_INCREMENT NOT NULL,
-    `author_id` VARCHAR(50) NOT NULL,
-    `language` VARCHAR(100) NOT NULL,
-    `task` VARCHAR(100) NOT NULL,
-    `body` TEXT NOT NULL,
-    `code` TEXT NULL,
-    `file_name` VARCHAR(255) NULL,
-    `file_path` VARCHAR(255) NULL,
-    `url` VARCHAR(500) NULL,
-    `visibility` ENUM('all', 'restricted') NOT NULL DEFAULT 'all',
-    `target_tag` VARCHAR(50) NULL,
-    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    FOREIGN KEY (`author_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+-- 6. 生徒進捗・習熟度テーブル（カリキュラムタスクごとの習熟度パーセント）
+CREATE TABLE `student_progress` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `student_id` INT NOT NULL COMMENT '生徒ユーザーID',
+  `task_id` INT NOT NULL COMMENT '学習タスクID',
+  `proficiency` INT NOT NULL DEFAULT 0 COMMENT '習熟度パーセント(0〜100)',
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (`student_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`task_id`) REFERENCES `curriculum_tasks`(`id`) ON DELETE CASCADE,
+  UNIQUE KEY `unique_student_task_progress` (`student_id`, `task_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 7. リプライ（返信・指導）テーブル
-CREATE TABLE IF NOT EXISTS `replies` (
-    `id` INT AUTO_INCREMENT NOT NULL,
-    `post_id` INT NOT NULL,
-    `author_id` VARCHAR(50) NOT NULL,
-    `body` TEXT NOT NULL,
-    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    FOREIGN KEY (`post_id`) REFERENCES `posts` (`id`) ON DELETE CASCADE,
-    FOREIGN KEY (`author_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+-- 7. 掲示板投稿テーブル
+CREATE TABLE `posts` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `user_id` INT NOT NULL COMMENT '投稿者ユーザーID',
+  `curriculum_id` INT NOT NULL COMMENT '対象の学習言語ID',
+  `task_id` INT NOT NULL COMMENT '詳細な学習内容（タスク）ID',
+  `content` TEXT NOT NULL COMMENT '本文・進捗内容',
+  `code_content` TEXT NULL COMMENT 'ソースコード記述欄',
+  `file_path` VARCHAR(255) NULL COMMENT '添付ファイル保存パス',
+  `file_name` VARCHAR(255) NULL COMMENT '添付ファイルオリジナル名',
+  `reference_url` VARCHAR(500) NULL COMMENT '参考URL',
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`curriculum_id`) REFERENCES `curriculums`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`task_id`) REFERENCES `curriculum_tasks`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 8. システム内通知テーブル
-CREATE TABLE IF NOT EXISTS `notifications` (
-    `id` INT AUTO_INCREMENT NOT NULL,
-    `for_user_id` VARCHAR(50) NOT NULL,
-    `text` VARCHAR(255) NOT NULL,
-    `type` VARCHAR(50) NOT NULL, -- 'reply', 'progress_update', 'private_post', 'curriculum_added', 'new_post'
-    `is_read` TINYINT(1) NOT NULL DEFAULT 0,
-    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    FOREIGN KEY (`for_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+-- 8. 投稿公開範囲制限（特定の属性タグを持つ友達にのみ公開する中間テーブル）
+-- 誰に送信されたか・どのような属性宛かは投稿者本人のみ分かり、他者からは完全に隠蔽される
+CREATE TABLE `post_visibilities` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `post_id` INT NOT NULL COMMENT '対象投稿ID',
+  `allowed_user_id` INT NOT NULL COMMENT '閲覧が許可されたユーザーID',
+  FOREIGN KEY (`post_id`) REFERENCES `posts`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`allowed_user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 9. 先生リプライ・指導テーブル
+CREATE TABLE `replies` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `post_id` INT NOT NULL COMMENT '対象の生徒投稿ID',
+  `user_id` INT NOT NULL COMMENT '先生または自身のユーザーID',
+  `content` TEXT NOT NULL COMMENT '指導・返信内容',
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (`post_id`) REFERENCES `posts`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 10. システム内通知テーブル
+CREATE TABLE `notifications` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `user_id` INT NOT NULL COMMENT '通知を受け取るユーザーID',
+  `sender_id` INT NOT NULL COMMENT '通知を引き起こしたユーザーID',
+  `type` VARCHAR(50) NOT NULL COMMENT '通知タイプ(reply, proficiency, custom_visibility, new_task, new_post)',
+  `target_id` INT NOT NULL COMMENT '関連する対象ID（post_id や curriculum_id 等）',
+  `is_read` TINYINT(1) DEFAULT 0 COMMENT '既読フラグ(0:未読, 1:既読)',
+  `message` VARCHAR(255) NOT NULL COMMENT '通知表示テキスト',
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`sender_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 
 -- ==========================================
--- テスト用初期ダミーデータの挿入
+-- テスト用初期ダミーデータのインポート
 -- ==========================================
 
--- パスワードハッシュの用意
--- 'admin123' -> $2y$10$6RzZby6XkX8l7/B4X7R1eu3V5O0D9Z0N8V8Zf8a8s8d8f8g8h8j8k (シミュレートハッシュ)
--- 実運用では password_hash() を使用。ダミー用としてpassword_hash('password', PASSWORD_DEFAULT)に相当する値を入れておきます。
--- ここでは一律 password_hash('password', PASSWORD_DEFAULT) のハッシュ値 '$2y$10$mC3GgQY7C2/t6eOq2GbyDe39R3S1i4fO4C6p5v5lA0lO5F6X0vB1G' を利用。
+-- パスワードはすべて「123456」をハッシュ化
+-- ハッシュ：$2y$10$ErPIIJhCMFX2xp2QpNRo7.4l27pq9KFluJLUXv4AsYWcP8kLZoKXa
+SET @hashed_password = '$2y$10$ErPIIJhCMFX2xp2QpNRo7.4l27pq9KFluJLUXv4AsYWcP8kLZoKXa';
 
-INSERT INTO `users` (`id`, `name`, `password_hash`, `role`) VALUES
-('teacher_admin', '先生（管理者）', '$2y$10$mC3GgQY7C2/t6eOq2GbyDe39R3S1i4fO4C6p5v5lA0lO5F6X0vB1G', 'teacher'),
-('student_alice', 'アリス', '$2y$10$mC3GgQY7C2/t6eOq2GbyDe39R3S1i4fO4C6p5v5lA0lO5F6X0vB1G', 'student'),
-('student_bob', 'ボブ', '$2y$10$mC3GgQY7C2/t6eOq2GbyDe39R3S1i4fO4C6p5v5lA0lO5F6X0vB1G', 'student'),
-('student_charlie', 'チャーリー', '$2y$10$mC3GgQY7C2/t6eOq2GbyDe39R3S1i4fO4C6p5v5lA0lO5F6X0vB1G', 'student')
-ON DUPLICATE KEY UPDATE `id`=`id`;
+-- 1. ユーザーアカウントの登録
+-- 先生 (1名)
+INSERT INTO `users` (`id`, `username`, `display_name`, `password_hash`, `role`, `invite_token`) VALUES
+(1, 'teacher_admin', '山田先生（管理者）', @hashed_password, 'teacher', 'token_teacher_admin');
 
--- カリキュラムマスター
-INSERT INTO `curriculums` (`language`, `task`) VALUES
-('HTML/CSS', 'タグの基礎'),
-('HTML/CSS', 'Flexboxレイアウト'),
-('HTML/CSS', 'レスポンシブ設計'),
-('PHP', '変数と演算'),
-('PHP', '条件分岐とループ'),
-('PHP', '関数'),
-('PHP', 'MySQL連携')
-ON DUPLICATE KEY UPDATE `id`=`id`;
+-- 生徒 (3名)
+INSERT INTO `users` (`id`, `username`, `display_name`, `password_hash`, `role`, `invite_token`) VALUES
+(2, 'student_alice', 'アリス', @hashed_password, 'student', 'token_student_alice'),
+(3, 'student_bob', 'ボブ', @hashed_password, 'student', 'token_student_bob'),
+(4, 'student_charlie', 'チャーリー', @hashed_password, 'student', 'token_student_charlie');
 
--- 生徒の学習登録
-INSERT INTO `student_languages` (`student_id`, `language`) VALUES
-('student_alice', 'HTML/CSS'),
-('student_alice', 'PHP'),
-('student_bob', 'PHP')
-ON DUPLICATE KEY UPDATE `student_id`=`student_id`;
+-- 2. カリキュラムマスター（先生設定済み）
+INSERT INTO `curriculums` (`id`, `name`) VALUES
+(1, 'HTML/CSS'),
+(2, 'PHP');
 
--- 習熟度初期評価
-INSERT INTO `progress` (`student_id`, `language`, `task`, `percent`) VALUES
-('student_alice', 'HTML/CSS', 'タグの基礎', 100),
-('student_alice', 'HTML/CSS', 'Flexboxレイアウト', 80),
-('student_alice', 'HTML/CSS', 'レスポンシブ設計', 40),
-('student_alice', 'PHP', '変数と演算', 90),
-('student_alice', 'PHP', '条件分岐とループ', 60),
-('student_alice', 'PHP', '関数', 30),
-('student_alice', 'PHP', 'MySQL連携', 0),
-('student_bob', 'PHP', '変数と演算', 50),
-('student_bob', 'PHP', '条件分岐とループ', 10),
-('student_bob', 'PHP', '関数', 0),
-('student_bob', 'PHP', 'MySQL連携', 0)
-ON DUPLICATE KEY UPDATE `percent`=`percent`;
+-- 3. 詳細カリキュラムタスクの登録
+-- HTML/CSS
+INSERT INTO `curriculum_tasks` (`id`, `curriculum_id`, `task_name`) VALUES
+(1, 1, 'タグの基礎'),
+(2, 1, 'Flexboxレイアウト'),
+(3, 1, 'レスポンシブ設計');
 
--- 友達登録（アリスがボブを「友達」と登録）
-INSERT INTO `friendships` (`from_user_id`, `to_user_id`, `tag`) VALUES
-('student_alice', 'student_bob', '友達'),
-('student_bob', 'student_alice', '友達') -- 双方向
-ON DUPLICATE KEY UPDATE `tag`=`tag`;
+-- PHP
+INSERT INTO `curriculum_tasks` (`id`, `curriculum_id`, `task_name`) VALUES
+(4, 2, '変数と演算'),
+(5, 2, '条件分岐とループ'),
+(6, 2, '関数'),
+(7, 2, 'MySQL連携');
 
--- 初期質問投稿
-INSERT INTO `posts` (`id`, `author_id`, `language`, `task`, `body`, `code`, `file_name`, `file_path`, `url`, `visibility`) VALUES
-(1, 'student_alice', 'PHP', '関数', 'PHPの関数で、引数の渡し方（値渡しと参照渡し）に躓いてしまいました。以下の関数を実行すると、元の変数の値が書き変わってしまいます。どうしてでしょうか？', '<?php\nfunction modifyValue(&$num) {\n    $num += 10;\n}\n\n$val = 5;\nmodifyValue($val);\necho $val; // なぜ 15 になる？\n?>', 'php_scope_error.png', 'uploads/php_scope_error.png', 'https://www.php.net/manual/ja/functions.arguments.php', 'all')
-ON DUPLICATE KEY UPDATE `id`=`id`;
+-- 4. 学習プロフィール（生徒選択済み）
+-- Alice: PHP、HTML/CSS
+INSERT INTO `student_curriculums` (`student_id`, `curriculum_id`) VALUES
+(2, 1),
+(2, 2);
+-- Bob: PHP
+INSERT INTO `student_curriculums` (`student_id`, `curriculum_id`) VALUES
+(3, 2);
 
--- 先生からの初期回答リプライ
-INSERT INTO `replies` (`id`, `post_id`, `author_id`, `body`) VALUES
-(1, 1, 'teacher_admin', 'アリスさん、良い質問ですね！引数の前についている `&`（アンパサンド）がポイントです。\nこれは「参照渡し（リファレンス）」を指定する記号です。これがあると、関数内での変更が関数外の元の変数にも直接影響を与えます。\nもし元の値を変えたくない場合は、`function modifyValue($num)` のように `&` を外して「値渡し」にしてみてください。')
-ON DUPLICATE KEY UPDATE `id`=`id`;
+-- 5. 習熟度初期データ設定 (Alice, Bob)
+-- Alice (HTML/CSS)
+INSERT INTO `student_progress` (`student_id`, `task_id`, `proficiency`) VALUES
+(2, 1, 90),
+(2, 2, 80),
+(2, 3, 40);
+-- Alice (PHP)
+INSERT INTO `student_progress` (`student_id`, `task_id`, `proficiency`) VALUES
+(2, 4, 95),
+(2, 5, 70),
+(2, 6, 20), -- 関数
+(2, 7, 0);
+-- Bob (PHP)
+INSERT INTO `student_progress` (`student_id`, `task_id`, `proficiency`) VALUES
+(3, 4, 80),
+(3, 5, 50),
+(3, 6, 0),
+(3, 7, 0);
 
--- 初期通知
-INSERT INTO `notifications` (`for_user_id`, `text`, `type`, `is_read`) VALUES
-('student_alice', '先生（管理者）があなたの投稿にリプライを投稿しました。', 'reply', 0)
-ON DUPLICATE KEY UPDATE `id`=`id`;
+-- 6. 友達登録（アリスからボブへの「友達」属性登録）
+INSERT INTO `friendships` (`user_id`, `friend_id`, `attribute_tag`) VALUES
+(2, 3, '友達'), -- AliceがBobを「友達」に設定
+(3, 2, 'クラスメイト'); -- BobがAliceを「クラスメイト」に設定
+
+-- 7. 初期投稿
+-- Aliceの質問：「PHPの関数で引数の渡し方に躓いた」
+INSERT INTO `posts` (`id`, `user_id`, `curriculum_id`, `task_id`, `content`, `code_content`, `file_path`, `file_name`, `reference_url`, `created_at`) VALUES
+(1, 2, 2, 6, 
+ 'PHPの関数を学習中ですが、参照渡し（&）と値渡しの違いが直感的に理解できません。どのようなシチュエーションで使い分けるべきでしょうか？簡単な例を教えていただけると助かります！', 
+ '<?php\nfunction modifyValue($val) {\n    $val = $val + 10;\n}\n\n$num = 5;\nmodifyValue($num);\necho $num; // ここが15にならない理由が分かりません\n?>', 
+ NULL, NULL, 'https://www.php.net/manual/ja/functions.arguments.php', 
+ DATE_SUB(NOW(), INTERVAL 2 HOUR));
+
+-- 8. 先生からのリプライ（指導）
+INSERT INTO `replies` (`id`, `post_id`, `user_id`, `content`, `created_at`) VALUES
+(1, 1, 1, 
+ 'アリスさん、良い質問ですね！\nPHPではデフォルトが「値渡し」になるため、関数内で引数の値を変更しても元の変数 `$num` には影響しません。元の変数を直接書き換えたい場合は、引数に `&` を付与して「参照渡し」にします。\n\n```php\nfunction modifyValue(&$val) { // & を付ける\n    $val = $val + 10;\n}\n```\nこれで `$num` は `15` になります。基本的には値渡しを使用し、メモリ節約や直接破壊的変更を行いたい特殊な場合のみ参照渡しと覚えておきましょう！', 
+ DATE_SUB(NOW(), INTERVAL 90 MINUTE));
+
+-- 9. 初期通知の登録
+INSERT INTO `notifications` (`id`, `user_id`, `sender_id`, `type`, `target_id`, `is_read`, `message`, `created_at`) VALUES
+(1, 2, 1, 'reply', 1, 0, '山田先生（管理者）があなたの投稿に指導リプライを行いました。', DATE_SUB(NOW(), INTERVAL 90 MINUTE));

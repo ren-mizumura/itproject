@@ -1,66 +1,81 @@
 <!DOCTYPE html>
-<html lang="ja" class="h-full bg-[#0d1117] text-[#c9d1d9]">
+<html lang="ja">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ログイン - DevLMS</title>
-    <!-- Tailwind CSS -->
+    <title>GitProgress にログインする</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            background-color: #f6f8fa;
+        }
+    </style>
 </head>
-<body class="h-full flex items-center justify-center bg-[#0d1117] px-4 py-12 sm:px-6 lg:px-8">
+<body class="min-h-screen flex flex-col items-center justify-center p-6">
 
-    <div class="max-w-md w-full space-y-8 bg-[#161b22] p-8 border border-[#30363d] rounded-lg shadow-xl">
-        <div class="text-center">
-            <div class="mx-auto h-12 w-12 rounded-md bg-[#58a6ff] text-[#0d1117] flex items-center justify-center font-bold">
-                <i data-lucide="terminal" class="w-8 h-8"></i>
-            </div>
-            <h2 class="mt-4 text-center text-xl font-extrabold text-white">学習進捗管理システム</h2>
-            <p class="mt-2 text-center text-xs text-[#8b949e]">DevLMS にログインして進捗を記録しましょう</p>
+    <div class="w-[340px] flex flex-col items-center">
+        <!-- ロゴ -->
+        <div class="mb-6 flex flex-col items-center">
+            <i data-lucide="git-branch" class="text-[#3fb950] w-12 h-12 mb-3"></i>
+            <h1 class="text-2xl font-light text-[#24292f] tracking-tight">GitProgress にサインイン</h1>
         </div>
 
-        <?php if (isset($_SESSION['error'])): ?>
-            <div class="bg-[#2d1f1f] border border-[#f85149]/30 text-[#f85149] px-4 py-3 rounded text-xs">
-                <?= htmlspecialchars($_SESSION['error'], ENT_QUOTES, 'UTF-8') ?>
+        <!-- 友達招待からアクセスされた場合のリマインダー -->
+        <?php if (isset($_GET['invited_by'])): ?>
+            <div class="w-full mb-4 bg-blue-50 border border-blue-300 text-blue-800 text-xs rounded-md p-3 flex items-start space-x-2">
+                <i data-lucide="info" class="w-4 h-4 flex-shrink-0 text-blue-500 mt-0.5"></i>
+                <p>
+                    <strong><?php echo htmlspecialchars($_GET['invited_by']); ?></strong>さんから招待されました！アカウント登録またはログインすると自動的に友達登録が紐付きます。
+                </p>
             </div>
-            <?php unset($_SESSION['error']); ?>
         <?php endif; ?>
 
-        <?php if (isset($_SESSION['success'])): ?>
-            <div class="bg-[#1f2c22] border border-[#2ea44f]/30 text-[#2ea44f] px-4 py-3 rounded text-xs">
-                <?= htmlspecialchars($_SESSION['success'], ENT_QUOTES, 'UTF-8') ?>
+        <!-- エラーメッセージ -->
+        <?php if ($error): ?>
+            <div class="w-full mb-4 bg-red-50 border border-red-200 text-red-800 text-xs rounded-md p-3 flex items-center space-x-2">
+                <i data-lucide="alert-circle" class="w-4 h-4 text-red-500 flex-shrink-0"></i>
+                <p><?php echo htmlspecialchars($error); ?></p>
             </div>
-            <?php unset($_SESSION['success']); ?>
         <?php endif; ?>
 
-        <form class="mt-8 space-y-4 text-xs" action="/20260630/?action=login" method="POST">
-            <div>
-                <label for="id" class="block text-[#8b949e] font-semibold mb-1">ユーザーID</label>
-                <input id="id" name="id" type="text" required class="appearance-none rounded w-full px-3 py-2.5 bg-[#0d1117] border border-[#30363d] text-white focus:outline-none focus:border-[#58a6ff] placeholder-gray-500 font-mono" placeholder="student_alice など">
-            </div>
-            <div>
-                <label for="password" class="block text-[#8b949e] font-semibold mb-1">パスワード</label>
-                <input id="password" name="password" type="password" required class="appearance-none rounded w-full px-3 py-2.5 bg-[#0d1117] border border-[#30363d] text-white focus:outline-none focus:border-[#58a6ff] placeholder-gray-500" placeholder="••••••••">
-            </div>
+        <!-- ログインフォーム -->
+        <div class="w-full bg-white border border-[#d0d7de] rounded-md p-5 shadow-sm">
+            <form action="<?php echo BASE_URL; ?>login" method="POST" class="space-y-4">
+                <div>
+                    <label for="username" class="block text-sm font-medium text-[#24292f] mb-1.5">ユーザーID</label>
+                    <input type="text" name="username" id="username" required autofocus placeholder="例: student_alice"
+                           class="w-full border border-[#d0d7de] rounded px-3 py-1.5 text-sm focus:border-[#0969da] focus:ring-1 focus:ring-[#0969da] focus:outline-none bg-[#f6f8fa] focus:bg-white transition">
+                </div>
 
-            <div class="pt-2">
-                <button type="submit" class="w-full flex justify-center py-2.5 px-4 border border-transparent rounded text-sm font-semibold text-white bg-[#2ea44f] hover:bg-[#238636] focus:outline-none shadow-md transition duration-200">
-                    ログイン
+                <div>
+                    <div class="flex justify-between items-center mb-1.5">
+                        <label for="password" class="block text-sm font-medium text-[#24292f]">パスワード</label>
+                    </div>
+                    <input type="password" name="password" id="password" required placeholder="••••••••"
+                           class="w-full border border-[#d0d7de] rounded px-3 py-1.5 text-sm focus:border-[#0969da] focus:ring-1 focus:ring-[#0969da] focus:outline-none bg-[#f6f8fa] focus:bg-white transition">
+                </div>
+
+                <button type="submit" class="w-full bg-[#2c974b] hover:bg-[#2c8543] text-white font-semibold py-1.5 px-4 rounded text-sm transition shadow-sm border border-[#217c3b]">
+                    サインインする
                 </button>
-            </div>
-        </form>
-
-        <div class="mt-4 text-center text-xs">
-            <span class="text-[#8b949e]">初めてご利用の方はこちら：</span>
-            <a href="/20260630/?action=register_form" class="font-bold text-[#58a6ff] hover:underline">生徒の自己登録へ</a>
+            </form>
         </div>
 
-        <div class="mt-6 border-t border-[#30363d] pt-4 text-[11px] text-[#8b949e] bg-[#0d1117]/40 p-3 rounded">
-            <p class="font-semibold mb-1 text-white">🔑 テスト用初期アカウント一覧:</p>
-            <ul class="space-y-1 font-mono">
-                <li>・先生 ID: <span class="text-white">teacher_admin</span> (pw: password)</li>
-                <li>・生徒 ID: <span class="text-white">student_alice</span> (pw: password)</li>
-                <li>・生徒 ID: <span class="text-white">student_bob</span> (pw: password)</li>
+        <!-- 登録への案内 -->
+        <div class="w-full mt-4 bg-transparent border border-[#d0d7de] rounded-md p-4 text-center text-xs text-[#24292f]">
+            新しく学習を始めますか？ 
+            <a href="<?php echo BASE_URL; ?>register" class="text-[#0969da] font-medium hover:underline">アカウントを作成する</a>
+        </div>
+
+        <!-- デフォルトログイン案内（テスト用） -->
+        <div class="w-full mt-6 bg-gray-100 border border-gray-200 rounded p-3 text-[11px] text-gray-500">
+            <p class="font-bold mb-1">【検証用テストアカウント】</p>
+            <ul class="list-disc list-inside space-y-0.5">
+                <li>先生: <code class="bg-gray-200 px-1 rounded">teacher_admin</code> / <code class="bg-gray-200 px-1 rounded">password123</code></li>
+                <li>生徒: <code class="bg-gray-200 px-1 rounded">student_alice</code> / <code class="bg-gray-200 px-1 rounded">password123</code></li>
+                <li>生徒: <code class="bg-gray-200 px-1 rounded">student_bob</code> / <code class="bg-gray-200 px-1 rounded">password123</code></li>
             </ul>
         </div>
     </div>

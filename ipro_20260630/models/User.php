@@ -1,120 +1,171 @@
 <?php
+require_once __DIR__ . '/../config/database.php';
+
 class User {
     private $db;
 
-    public function __construct($db) {
-        $db->exec("SET NAMES utf8mb4");
-        $this->db = $db;
+    public function __construct() {
+        $this->db = Database::getConnection();
     }
 
-    // ユーザー作成 (サインアップ)
-    public function create($id, $name, $password, $role = 'student') {
-        $sql = "INSERT INTO users (id, name, password_hash, role) VALUES (:id, :name, :password_hash, :role)";
-        $stmt = $this->db->prepare($sql);
-        $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-        
-        return $stmt->execute([
-            ':id' => $id,
-            ':name' => $name,
-            ':password_hash' => $hashed_password,
-            ':role' => $role
-        ]);
+    /**
+     * ユーザー名からユーザー情報を取得
+     */
+    public function findByUsername($username) {
+        $stmt = $this->db->prepare("SELECT * FROM users WHERE username = :username LIMIT 1");
+        $stmt->execute([':username' => $username]);
+        return $stmt->fetch();
     }
 
-    // ユーザーIDの存在確認
-    public function exists($id) {
-        $sql = "SELECT COUNT(*) FROM users WHERE id = :id";
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute([':id' => $id]);
-        return $stmt->fetchColumn() > 0;
-    }
-
-    // IDによるユーザー取得
-    public function getById($id) {
-        $sql = "SELECT id, name, role FROM users WHERE id = :id";
-        $stmt = $this->db->prepare($sql);
+    /**
+     * IDからユーザー情報を取得
+     */
+    public function findById($id) {
+        $stmt = $this->db->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
         $stmt->execute([':id' => $id]);
         return $stmt->fetch();
     }
 
-    // ログイン認証
-    public function authenticate($id, $password) {
-        $sql = "SELECT * FROM users WHERE id = :id";
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute([':id' => $id]);
-        $user = $stmt->fetch();
+    /**
+     * 新規生徒ユーザー登録
+     */
+    public function register($username, $display_name, $password, $role = 'student') {
+        // パスワードのハッシュ化 (セキュリティ要件)
+        $password_hash = password_hash($password, PASSWORD_DEFAULT);
+        // ユニークな招待トークンを作成
+        $invite_token = bin2hex(random_bytes(16));
 
-        if ($user && password_verify($password, $user['password_hash'])) {
-            return $user;
+        $stmt = $this->db->prepare("INSERT INTO users (username, display_name, password_hash, role, invite_token) VALUES (:username, :display_name, :password_hash, :role, :invite_token)");
+        $result = $stmt->execute([
+            ':username' => $username,
+            ':display_name' => $display_name,
+            ':password_hash' => $password_hash,
+            ':role' => $role,
+            ':invite_token' => $invite_token
+        ]);
+
+        if ($result) {
+            return $this->db->lastInsertId();
         }
         return false;
     }
 
-    // 全ての生徒ユーザーのリスト取得
-    public function getAllStudents() {
-        $sql = "SELECT id, name FROM users WHERE role = 'student' ORDER BY id ASC";
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute();
+    /**
+     * トークンからユーザー情報を取得
+     */
+    public function findByInviteToken($token) {
+        $stmt = $this->db->prepare("SELECT * FROM users WHERE invite_token = :token LIMIT 1");
+        $stmt->execute([':token' => $token]);
+        return $stmt->fetch();
+    }
+
+    /**
+     * ユーザー名または表示名による生徒の検索
+     * 【修正】PDOエラー回避のためプレースホルダー名を :query1 と :query2 に分割
+     */
+    public function searchStudents($query, $current_user_id) {
+        $stmt = $this->db->prepare("
+            SELECT id, username, display_name, role 
+            FROM users 
+            WHERE (username LIKE :query1 OR display_name LIKE :query2) 
+              AND id != :current_user_id 
+              AND role = 'student' 
+            LIMIT 20
+        ");
+        
+        $stmt->execute([
+            ':query1' => '%' . $query . '%',
+            ':query2' => '%' . $query . '%',
+            ':current_user_id' => $current_user_id
+        ]);
         return $stmt->fetchAll();
     }
 
-    // -------------------------------------------------------------
-    // つながり (友達・属性タグ) の処理
-    // -------------------------------------------------------------
-
-    // 友達一覧の取得
-    public function getFriends($user_id) {
-        $sql = "SELECT f.to_user_id as id, u.name, f.tag 
-                FROM friendships f
-                JOIN users u ON f.to_user_id = u.id
-                WHERE f.from_user_id = :user_id";
-        $stmt = $this->db->prepare($sql);
+    /**
+     * 友達（属性）一覧の取得
+     */
+    public function getFriendsWithAttributes($user_id) {
+        $stmt = $this->db->prepare("
+            SELECT f.id as friendship_id, u.id as friend_id, u.username, u.display_name, f.attribute_tag, f.created_at
+            FROM friendships f
+            JOIN users u ON f.friend_id = u.id
+            WHERE f.user_id = :user_id
+            ORDER BY u.display_name ASC
+        ");
         $stmt->execute([':user_id' => $user_id]);
         return $stmt->fetchAll();
     }
 
-    // 友達関係の登録 (相互に初期値 '友達' で登録)
-    public function addFriendship($from, $to, $tag = '友達') {
-        // すでに存在するか確認
-        $sql = "SELECT COUNT(*) FROM friendships WHERE from_user_id = :from AND to_user_id = :to";
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute([':from' => $from, ':to' => $to]);
-        if ($stmt->fetchColumn() > 0) {
-            return true; // 登録済み
+    /**
+     * 相手との友達（属性）設定を取得
+     */
+    public function getFriendship($user_id, $friend_id) {
+        $stmt = $this->db->prepare("SELECT * FROM friendships WHERE user_id = :user_id AND friend_id = :friend_id LIMIT 1");
+        $stmt->execute([':user_id' => $user_id, ':friend_id' => $friend_id]);
+        return $stmt->fetch();
+    }
+
+    /**
+     * 友達・属性登録または更新
+     */
+    public function saveOrUpdateFriendship($user_id, $friend_id, $tag = '友達') {
+        if ($user_id === $friend_id) return false;
+
+        $existing = $this->getFriendship($user_id, $friend_id);
+        if ($existing) {
+            // 更新
+            $stmt = $this->db->prepare("UPDATE friendships SET attribute_tag = :tag WHERE user_id = :user_id AND friend_id = :friend_id");
+            return $stmt->execute([
+                ':tag' => $tag,
+                ':user_id' => $user_id,
+                ':friend_id' => $friend_id
+            ]);
+        } else {
+            // 新規
+            $stmt = $this->db->prepare("INSERT INTO friendships (user_id, friend_id, attribute_tag) VALUES (:user_id, :friend_id, :tag)");
+            return $stmt->execute([
+                ':user_id' => $user_id,
+                ':friend_id' => $friend_id,
+                ':tag' => $tag
+            ]);
         }
-
-        // 相互登録
-        $sqlInsert = "INSERT INTO friendships (from_user_id, to_user_id, tag) VALUES (:from, :to, :tag)";
-        $stmtInsert = $this->db->prepare($sqlInsert);
-        $stmtInsert->execute([':from' => $from, ':to' => $to, ':tag' => $tag]);
-
-        // 相手側からも登録
-        $sqlReverse = "INSERT IGNORE INTO friendships (from_user_id, to_user_id, tag) VALUES (:from, :to, :tag)";
-        $stmtReverse = $this->db->prepare($sqlReverse);
-        $stmtReverse->execute([':from' => $to, ':to' => $from, ':tag' => '友達']);
-
-        return true;
     }
 
-    // 友達属性タグの更新
-    public function updateFriendTag($from, $to, $new_tag) {
-        $sql = "UPDATE friendships SET tag = :tag WHERE from_user_id = :from AND to_user_id = :to";
-        $stmt = $this->db->prepare($sql);
-        return $stmt->execute([':tag' => $new_tag, ':from' => $from, ':to' => $to]);
+    /**
+     * 友達削除
+     */
+    public function removeFriendship($user_id, $friend_id) {
+        $stmt = $this->db->prepare("DELETE FROM friendships WHERE user_id = :user_id AND friend_id = :friend_id");
+        return $stmt->execute([
+            ':user_id' => $user_id,
+            ':friend_id' => $friend_id
+        ]);
     }
 
-    // つながり削除
-    public function removeFriendship($from, $to) {
-        $sql = "DELETE FROM friendships WHERE (from_user_id = :from AND to_user_id = :to) OR (from_user_id = :to AND to_user_id = :from)";
-        $stmt = $this->db->prepare($sql);
-        return $stmt->execute([':from' => $from, ':to' => $to]);
-    }
-
-    // 自分が他ユーザーに設定している全属性タグの一覧（重複排除）
-    public function getMyUniqueTags($user_id) {
-        $sql = "SELECT DISTINCT tag FROM friendships WHERE from_user_id = :user_id ORDER BY tag ASC";
-        $stmt = $this->db->prepare($sql);
+    /**
+     * 自分の友達属性リストを一意に取得（投稿範囲選択UI用、例: 「友達」「グループA」など）
+     */
+    public function getDistinctAttributeTags($user_id) {
+        $stmt = $this->db->prepare("SELECT DISTINCT attribute_tag FROM friendships WHERE user_id = :user_id ORDER BY attribute_tag ASC");
         $stmt->execute([':user_id' => $user_id]);
         return $stmt->fetchAll(PDO::FETCH_COLUMN);
+    }
+
+    /**
+     * 特定の属性を持つ友達のID一覧を取得
+     */
+    public function getFriendIdsByAttribute($user_id, $attribute_tag) {
+        $stmt = $this->db->prepare("SELECT friend_id FROM friendships WHERE user_id = :user_id AND attribute_tag = :tag");
+        $stmt->execute([':user_id' => $user_id, ':tag' => $attribute_tag]);
+        return $stmt->fetchAll(PDO::FETCH_COLUMN);
+    }
+
+    /**
+     * 全ての生徒一覧の取得（先生用、管理画面等）
+     */
+    public function getAllStudents() {
+        $stmt = $this->db->prepare("SELECT id, username, display_name, created_at FROM users WHERE role = 'student' ORDER BY display_name ASC");
+        $stmt->execute();
+        return $stmt->fetchAll();
     }
 }

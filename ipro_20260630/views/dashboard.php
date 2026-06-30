@@ -1,838 +1,866 @@
 <?php
-// ヘッダー読み込み
-require_once 'views/layout/header.php';
-
-// メイン用のデータ
-$tab = $_GET['tab'] ?? 'feed';
-$lang_filter = $_GET['lang_filter'] ?? 'all';
-$author_filter = $_GET['author_filter'] ?? 'all';
-
-// 全体のタイムラインを取得
-$timeline = $this->postModel->getTimeline($user_id, $role, $lang_filter, $author_filter);
-
-// 先生用: 受講している全生徒
-$all_students = $this->userModel->getAllStudents();
+// ヘッダー・サイドバーを含む共通レイアウトのインクルード
+include __DIR__ . '/layout/header.php';
 ?>
 
-<!-- 共通コンテンツレイアウト -->
-<section class="flex-1 flex flex-col bg-[#0d1117] overflow-hidden">
+<!-- 上部タブ切り替えナビゲーション（GitHubのレポジトリ内タブを模倣） -->
+<div class="border-b border-[#d0d7de] pb-px flex space-x-6 mb-6">
+    <a href="?tab=feed" class="pb-3 text-sm font-semibold flex items-center space-x-2 border-b-2 <?php echo $current_tab === 'feed' ? 'border-[#fd8c73] text-[#24292f]' : 'border-transparent text-gray-500 hover:text-gray-800' ?>">
+        <i data-lucide="message-square" class="w-4 h-4"></i>
+        <span>学習掲示板フィード</span>
+    </a>
+
+    <?php if ($_SESSION['role'] === 'student'): ?>
+    <a href="?tab=curriculum" class="pb-3 text-sm font-semibold flex items-center space-x-2 border-b-2 <?php echo $current_tab === 'curriculum' ? 'border-[#fd8c73] text-[#24292f]' : 'border-transparent text-gray-500 hover:text-gray-800' ?>">
+        <i data-lucide="book-open" class="w-4 h-4"></i>
+        <span>カリキュラム学習登録</span>
+    </a>
+    <?php endif; ?>
+
+    <a href="?tab=friends" class="pb-3 text-sm font-semibold flex items-center space-x-2 border-b-2 <?php echo $current_tab === 'friends' ? 'border-[#fd8c73] text-[#24292f]' : 'border-transparent text-gray-500 hover:text-gray-800' ?>">
+        <i data-lucide="users" class="w-4 h-4"></i>
+        <span>友達・属性登録</span>
+    </a>
+
+    <?php if ($_SESSION['role'] === 'teacher'): ?>
+    <a href="?tab=teacher_students" class="pb-3 text-sm font-semibold flex items-center space-x-2 border-b-2 <?php echo $current_tab === 'teacher_students' ? 'border-[#fd8c73] text-[#24292f]' : 'border-transparent text-gray-500 hover:text-gray-800' ?>">
+        <i data-lucide="graduation-cap" class="w-4 h-4"></i>
+        <span>生徒進捗一覧・評価管理</span>
+    </a>
+    <a href="?tab=teacher_config" class="pb-3 text-sm font-semibold flex items-center space-x-2 border-b-2 <?php echo $current_tab === 'teacher_config' ? 'border-[#fd8c73] text-[#24292f]' : 'border-transparent text-gray-500 hover:text-gray-800' ?>">
+        <i data-lucide="settings" class="w-4 h-4"></i>
+        <span>マスタデータ設定</span>
+    </a>
+    <?php endif; ?>
+</div>
+
+<!-- エラー等トーストメッセージ表示 -->
+<?php if (isset($_SESSION['post_error'])): ?>
+    <div class="bg-red-50 border border-red-200 text-red-800 text-xs rounded p-3 mb-4 flex items-center justify-between">
+        <div class="flex items-center space-x-2">
+            <i data-lucide="alert-circle" class="text-red-500 w-4 h-4"></i>
+            <span><?php echo htmlspecialchars($_SESSION['post_error']); ?></span>
+        </div>
+        <button onclick="this.parentElement.remove()" class="text-red-600 hover:text-red-800">&times;</button>
+    </div>
+    <?php unset($_SESSION['post_error']); ?>
+<?php endif; ?>
+
+<!-- ==========================================
+     タブ1: 学習掲示板フィード & 進捗カレンダー
+     ========================================== -->
+<?php if ($current_tab === 'feed'): ?>
     
-    <!-- タブヘッダー -->
-    <div class="bg-[#161b22] border-b border-[#30363d] px-6 flex items-center justify-between">
-        <nav class="flex gap-4 text-sm font-medium" aria-label="Tabs">
-            <a href="/20260630/?tab=feed" class="border-b-2 <?= $tab === 'feed' ? 'border-[#58a6ff] text-white' : 'border-transparent text-[#8b949e] hover:text-white' ?> py-4 px-1 flex items-center gap-2 transition font-semibold">
-                <i data-lucide="message-square" class="w-4 h-4"></i>
-                <span>進捗・質問掲示板</span>
-            </a>
-            <a href="/20260630/?tab=analytics" class="border-b-2 <?= $tab === 'analytics' ? 'border-[#58a6ff] text-white' : 'border-transparent text-[#8b949e] hover:text-white' ?> py-4 px-1 flex items-center gap-2 transition">
-                <i data-lucide="bar-chart-2" class="w-4 h-4"></i>
-                <span>学習進捗・可視化</span>
-            </a>
-            <?php if ($role === 'teacher'): ?>
-                <a href="/20260630/?tab=curriculum-editor" class="border-b-2 <?= $tab === 'curriculum-editor' ? 'border-[#58a6ff] text-white' : 'border-transparent text-[#8b949e] hover:text-white' ?> py-4 px-1 flex items-center gap-2 transition">
-                    <i data-lucide="settings" class="w-4 h-4"></i>
-                    <span>カリキュラム構成 (先生限定)</span>
-                </a>
-            <?php endif; ?>
-        </nav>
+    <!-- 1. GitHubスタイル草カレンダー（学習アクティビティ） -->
+    <div class="bg-white border border-[#d0d7de] rounded-lg p-5 shadow-sm mb-6">
+        <div class="flex items-center justify-between mb-3">
+            <h4 class="text-sm font-bold text-gray-800 flex items-center space-x-2">
+                <i data-lucide="calendar" class="w-4 h-4 text-gray-500"></i>
+                <span>学習コントリビューション（過去90日間の進捗報告数） : <span class="text-blue-600"><?php echo htmlspecialchars($viewingStudentName); ?></span></span>
+            </h4>
+            <div class="flex items-center space-x-2 text-[10px] text-gray-400">
+                <span>Less</span>
+                <span class="w-2.5 h-2.5 bg-[#ebedf0] border border-gray-200 rounded-sm"></span>
+                <span class="w-2.5 h-2.5 bg-[#9be9a8] border border-gray-200 rounded-sm"></span>
+                <span class="w-2.5 h-2.5 bg-[#40c463] border border-gray-200 rounded-sm"></span>
+                <span class="w-2.5 h-2.5 bg-[#30a14e] border border-gray-200 rounded-sm"></span>
+                <span class="w-2.5 h-2.5 bg-[#216e39] border border-gray-200 rounded-sm"></span>
+                <span>More</span>
+            </div>
+        </div>
+
+        <!-- コントリビューション草グリッド -->
+        <div class="flex flex-wrap gap-[3px] p-2 bg-[#f8f9fa] rounded-md border border-gray-150 overflow-x-auto">
+            <?php foreach ($grassCalendar as $day): ?>
+                <div class="w-3.5 h-3.5 rounded-sm border-[0.5px] border-black/5 transition relative group
+                    <?php 
+                        if ($day['level'] === 0) echo 'bg-[#ebedf0]';
+                        elseif ($day['level'] === 1) echo 'bg-[#9be9a8]';
+                        elseif ($day['level'] === 2) echo 'bg-[#40c463]';
+                        elseif ($day['level'] === 3) echo 'bg-[#30a14e]';
+                        elseif ($day['level'] === 4) echo 'bg-[#216e39]';
+                    ?>"
+                    title="<?php echo htmlspecialchars($day['date']); ?> : <?php echo $day['count']; ?> 回の報告">
+                    <!-- Tooltip -->
+                    <div class="absolute bottom-full left-1/2 -translate-x-1/2 bg-[#24292f] text-white text-[10px] rounded px-2 py-1 hidden group-hover:block whitespace-nowrap mb-1.5 shadow-md z-10">
+                        <?php echo htmlspecialchars($day['date']); ?> : <?php echo $day['count']; ?>回報告
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        </div>
     </div>
 
-    <!-- スクロール可能なメインビュー -->
-    <div class="flex-1 overflow-y-auto p-6" id="tab-content-container">
-
-        <!-- ==========================================
-             1. 掲示板フィードタブ
-             ========================================== -->
-        <?php if ($tab === 'feed'): ?>
-            <div class="space-y-6 max-w-4xl mx-auto">
-                
-                <!-- 投稿フォーム (生徒、先生両方可能) -->
-                <?php if (!empty($study_languages) || $role === 'teacher'): ?>
-                <div class="bg-[#161b22] border border-[#30363d] rounded-lg shadow-sm">
-                    <div class="border-b border-[#30363d] bg-[#161b22]/50 px-4 py-3 flex items-center justify-between">
-                        <span class="text-xs font-semibold text-white flex items-center gap-1.5">
-                            <i data-lucide="edit-3" class="w-4 h-4 text-[#58a6ff]"></i>
-                            <span>新しい学習進捗 / 質問を投稿する</span>
-                        </span>
-                        <span class="text-xs text-[#8b949e]">投稿者: <?= htmlspecialchars($user_name, ENT_QUOTES, 'UTF-8') ?></span>
-                    </div>
+    <!-- 2. 進捗投稿エリア（生徒専用） -->
+    <?php if ($_SESSION['role'] === 'student'): ?>
+        <?php if (empty($studentCurriculums)): ?>
+            <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-5 text-center text-yellow-800 text-sm shadow-sm mb-6">
+                <i data-lucide="alert-triangle" class="w-8 h-8 text-yellow-500 mx-auto mb-2"></i>
+                <p class="font-bold">掲示板に投稿する前に、学習する言語を登録しましょう！</p>
+                <p class="text-xs text-yellow-600 mt-1">「カリキュラム学習登録」タブから先生の設定したプログラミング言語を追加してください。</p>
+            </div>
+        <?php else: ?>
+            <div class="bg-white border border-[#d0d7de] rounded-lg shadow-sm p-5 mb-6">
+                <h4 class="text-sm font-bold text-gray-800 mb-4 pb-2 border-b border-gray-100 flex items-center space-x-1">
+                    <i data-lucide="edit-3" class="w-4 h-4 text-gray-500"></i>
+                    <span>本日の学習進捗・質問を報告する</span>
+                </h4>
+                <form action="<?php echo BASE_URL; ?>post/create" method="POST" enctype="multipart/form-data" class="space-y-4">
                     
-                    <form id="post-form" action="/20260630/?action=create_post" method="POST" enctype="multipart/form-data" class="p-4 space-y-4">
-                        
-                        <!-- カリキュラム（対象言語・タスク）のマスター連動 -->
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-xs font-semibold text-[#8b949e] mb-1.5">学習言語の選択 <span class="text-github-danger">*</span></label>
-                                <select id="post-language" name="language" required onchange="updatePostTaskDropdown(this.value)" class="w-full bg-[#0d1117] border border-[#30363d] rounded px-3 py-2 text-white text-xs focus:outline-none focus:border-[#58a6ff]">
-                                    <option value="">-- 選択してください --</option>
-                                    <?php 
-                                    $form_langs = ($role === 'teacher') ? $all_languages : $study_languages;
-                                    foreach ($form_langs as $lang): ?>
-                                        <option value="<?= htmlspecialchars($lang, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($lang, ENT_QUOTES, 'UTF-8') ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <div>
-                                <label class="block text-xs font-semibold text-[#8b949e] mb-1.5">詳細タスク（カリキュラム） <span class="text-github-danger">*</span></label>
-                                <select id="post-task" name="task" required class="w-full bg-[#0d1117] border border-[#30363d] rounded px-3 py-2 text-white text-xs focus:outline-none focus:border-[#58a6ff]">
-                                    <option value="">-- 先に言語を選択してください --</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <!-- 進捗内容自由記述 -->
+                    <!-- セレクトボックス連携（言語 ＞ タスク） -->
+                    <div class="grid grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-xs font-semibold text-[#8b949e] mb-1.5">進捗内容・質問本文 <span class="text-github-danger">*</span></label>
-                            <textarea name="body" required rows="4" placeholder="今日学んだこと、躓いていること、実行結果などを入力してください..." class="w-full bg-[#0d1117] border border-[#30363d] rounded p-3 text-white text-xs focus:outline-none focus:border-[#58a6ff] placeholder-gray-600"></textarea>
-                        </div>
-
-                        <!-- ソースコード専用欄 -->
-                        <div class="border border-[#30363d] rounded overflow-hidden">
-                            <div class="bg-[#21262d] px-3 py-1.5 border-b border-[#30363d] flex items-center justify-between">
-                                <span class="text-xs text-[#8b949e] font-mono flex items-center gap-1.5">
-                                    <i data-lucide="code" class="w-3.5 h-3.5 text-[#58a6ff]"></i>
-                                    <span>プログラムコード（任意）</span>
-                                </span>
-                                <span class="text-[10px] text-[#8b949e]">monospace 記述欄</span>
-                            </div>
-                            <textarea name="code" rows="6" placeholder="// ここにコードを書き込めます（自動でシンタックス・等幅フォントとしてタイムラインに並びます）" class="w-full bg-[#0d1117] font-mono text-xs text-[#e6edf3] p-3 focus:outline-none resize-y leading-[1.5rem] code-editor-textarea"></textarea>
-                        </div>
-
-                        <!-- 参考URL ＆ ファイル添付 -->
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-xs font-semibold text-[#8b949e] mb-1.5">参考URL（任意）</label>
-                                <div class="relative">
-                                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                        <i data-lucide="link" class="w-3.5 h-3.5 text-[#8b949e]"></i>
-                                    </div>
-                                    <input type="url" name="url" placeholder="https://example.com" class="w-full bg-[#0d1117] border border-[#30363d] rounded pl-9 pr-3 py-2 text-white text-xs focus:outline-none focus:border-[#58a6ff]">
-                                </div>
-                            </div>
-                            <div>
-                                <label class="block text-xs font-semibold text-[#8b949e] mb-1.5">学習ファイルの添付（最大5MB: 画像/txt/pdf）</label>
-                                <input type="file" name="attached_file" class="block w-full text-xs text-github-muted file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-[#21262d] file:text-white hover:file:bg-[#30363d] cursor-pointer">
-                            </div>
-                        </div>
-
-                        <!-- 公開範囲設定 -->
-                        <div>
-                            <label class="block text-xs font-semibold text-[#8b949e] mb-1.5">公開範囲（プライバシー設定） <span class="text-github-danger">*</span></label>
-                            <div class="flex items-center gap-4 bg-[#0d1117] p-3 border border-[#30363d] rounded">
-                                <label class="inline-flex items-center gap-2 cursor-pointer text-xs text-white">
-                                    <input type="radio" name="visibility" value="all" checked onchange="toggleFormTagSelector(false)" class="text-[#58a6ff] focus:ring-[#58a6ff] bg-[#0d1117] border-[#30363d]">
-                                    <span>全体公開</span>
-                                </label>
-                                <label class="inline-flex items-center gap-2 cursor-pointer text-xs text-white">
-                                    <input type="radio" name="visibility" value="restricted" onchange="toggleFormTagSelector(true)" class="text-[#58a6ff] focus:ring-[#58a6ff] bg-[#0d1117] border-[#30363d]">
-                                    <span>属性指定公開（プライベート）</span>
-                                </label>
-                            </div>
-                            <div id="visibility-tag-selector-container" class="hidden mt-2.5">
-                                <label class="block text-xs font-semibold text-[#8b949e] mb-1.5">開示する属性タグを選択してください</label>
-                                <select name="target_tag" class="bg-[#0d1117] border border-[#30363d] rounded px-3 py-2 text-white text-xs focus:outline-none focus:border-[#58a6ff]">
-                                    <?php if (empty($unique_tags)): ?>
-                                        <option value="">-- ※設定されている属性タグがありません --</option>
-                                    <?php else: ?>
-                                        <?php foreach ($unique_tags as $utag): ?>
-                                            <option value="<?= htmlspecialchars($utag, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($utag, ENT_QUOTES, 'UTF-8') ?></option>
-                                        <?php endforeach; ?>
-                                    <?php endif; ?>
-                                </select>
-                                <p class="text-[10px] text-github-muted mt-1">※この属性をあなたが設定しているユーザーにのみ公開されます（設定属性名や宛先情報は他ユーザーには一切見えません）</p>
-                            </div>
-                        </div>
-
-                        <!-- ボタン -->
-                        <div class="flex justify-end pt-2">
-                            <button type="submit" class="bg-[#2ea44f] hover:bg-[#238636] text-white text-xs font-semibold px-4 py-2 rounded shadow-sm flex items-center gap-1.5 transition">
-                                <i data-lucide="send" class="w-3.5 h-3.5"></i>
-                                <span>タイムラインに投稿</span>
-                            </button>
-                        </div>
-                    </form>
-                </div>
-                <?php else: ?>
-                <div class="bg-[#161b22] border border-github-attention/30 rounded-lg p-6 text-center text-xs">
-                    <i data-lucide="alert-circle" class="w-8 h-8 mx-auto text-github-attention mb-2"></i>
-                    <p class="text-white font-bold mb-1">学習言語プロフィールが空です</p>
-                    <p class="text-github-muted mb-3">左サイドバーの「学習プログラム」の「変更」から、受講したい学習言語を設定すると投稿が可能になります。</p>
-                </div>
-                <?php endif; ?>
-
-                <!-- フィルターバー -->
-                <div class="flex flex-col sm:flex-row gap-2.5 justify-between items-stretch sm:items-center bg-[#161b22] p-3 border border-[#30363d] rounded-lg">
-                    <div class="flex items-center gap-2">
-                        <i data-lucide="filter" class="w-4 h-4 text-[#8b949e]"></i>
-                        <span class="text-xs font-semibold text-white">タイムラインの絞り込み:</span>
-                    </div>
-                    <form action="/20260630/" method="GET" class="flex flex-wrap gap-2">
-                        <input type="hidden" name="tab" value="feed">
-                        <select name="lang_filter" onchange="this.form.submit()" class="bg-[#0d1117] border border-[#30363d] text-xs rounded px-2.5 py-1.5 text-white">
-                            <option value="all" <?= $lang_filter === 'all' ? 'selected' : '' ?>>すべての言語</option>
-                            <?php foreach ($all_languages as $l): ?>
-                                <option value="<?= htmlspecialchars($l, ENT_QUOTES, 'UTF-8') ?>" <?= $lang_filter === $l ? 'selected' : '' ?>><?= htmlspecialchars($l, ENT_QUOTES, 'UTF-8') ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                        <select name="author_filter" onchange="this.form.submit()" class="bg-[#0d1117] border border-[#30363d] text-xs rounded px-2.5 py-1.5 text-white">
-                            <option value="all" <?= $author_filter === 'all' ? 'selected' : '' ?>>すべての投稿者</option>
-                            <?php foreach ($all_students as $student): ?>
-                                <option value="<?= htmlspecialchars($student['id'], ENT_QUOTES, 'UTF-8') ?>" <?= $author_filter === $student['id'] ? 'selected' : '' ?>><?= htmlspecialchars($student['name'], ENT_QUOTES, 'UTF-8') ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </form>
-                </div>
-
-                <!-- 掲示板フィード -->
-                <div class="space-y-6">
-                    <?php if (empty($timeline)): ?>
-                        <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-8 text-center text-github-muted">
-                            <i data-lucide="info" class="w-8 h-8 mx-auto text-[#8b949e] mb-2"></i>
-                            <p class="text-sm">該当する学習進捗投稿はありません。</p>
-                        </div>
-                    <?php else: ?>
-                        <?php foreach ($timeline as $post): 
-                            $is_author = $post['author_id'] === $user_id;
-                            $is_teacher = $role === 'teacher';
-                            // 投稿後1時間制限
-                            $elapsed_seconds = time() - strtotime($post['created_at']);
-                            $can_edit_delete = $is_teacher || ($is_author && $elapsed_seconds <= 3600);
-                        ?>
-                        <div class="bg-[#161b22] border border-[#30363d] rounded-lg shadow-sm">
-                            <div class="p-4 border-b border-[#30363d]">
-                                <div class="flex justify-between items-start mb-3">
-                                    <div class="flex items-center gap-2.5">
-                                        <div class="w-9 h-9 rounded-full bg-[#58a6ff]/10 border border-[#58a6ff]/30 flex items-center justify-center font-bold text-[#58a6ff] text-sm">
-                                            <?= htmlspecialchars(mb_substr($post['author_name'], 0, 1), ENT_QUOTES, 'UTF-8') ?>
-                                        </div>
-                                        <div>
-                                            <div class="flex items-center gap-2 flex-wrap">
-                                                <span class="font-bold text-white text-xs"><?= htmlspecialchars($post['author_name'], ENT_QUOTES, 'UTF-8') ?></span>
-                                                <span class="text-[10px] text-[#8b949e] font-mono">@<?= htmlspecialchars($post['author_id'], ENT_QUOTES, 'UTF-8') ?></span>
-                                                <span class="text-[10px] px-1.5 py-0.5 rounded bg-[#58a6ff]/10 text-[#58a6ff] font-bold font-mono">
-                                                    <?= htmlspecialchars($post['language'], ENT_QUOTES, 'UTF-8') ?> ＞ <?= htmlspecialchars($post['task'], ENT_QUOTES, 'UTF-8') ?>
-                                                </span>
-                                            </div>
-                                            <div class="flex items-center gap-2 mt-0.5">
-                                                <span class="text-[9px] text-[#8b949e] font-mono"><?= date('Y/m/d H:i', strtotime($post['created_at'])) ?></span>
-                                                <?php if ($post['visibility'] === 'restricted'): ?>
-                                                    <span class="bg-[#bc8cff]/10 text-[#bc8cff] border border-[#bc8cff]/30 text-[10px] px-2 py-0.5 rounded flex items-center gap-1">
-                                                        <i data-lucide="lock" class="w-3 h-3"></i>
-                                                        <span><?= $is_author ? htmlspecialchars($post['target_tag'], ENT_QUOTES, 'UTF-8') . " 限定" : "プライベート" ?></span>
-                                                    </span>
-                                                <?php else: ?>
-                                                    <span class="bg-[#30363d] text-github-muted text-[10px] px-2 py-0.5 rounded flex items-center gap-1">
-                                                        <i data-lucide="globe" class="w-3 h-3"></i><span>全体公開</span>
-                                                    </span>
-                                                <?php endif; ?>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <!-- ライフサイクル編集・削除 -->
-                                    <div class="flex gap-2">
-                                        <?php if ($can_edit_delete): ?>
-                                            <button onclick="openEditPostDialog(<?= $post['id'] ?>, '<?= htmlspecialchars(json_encode($post['body']), ENT_QUOTES, 'UTF-8') ?>', '<?= htmlspecialchars(json_encode($post['code']), ENT_QUOTES, 'UTF-8') ?>', '<?= htmlspecialchars($post['url'], ENT_QUOTES, 'UTF-8') ?>')" class="bg-[#21262d] border border-[#30363d] hover:bg-[#30363d] text-[10px] text-white px-2.5 py-1 rounded">編集</button>
-                                            <form action="/20260630/?action=delete_post" method="POST" onsubmit="return confirm('投稿を削除しますか？');">
-                                                <input type="hidden" name="post_id" value="<?= $post['id'] ?>">
-                                                <button type="submit" class="bg-github-border hover:bg-github-danger text-github-danger hover:text-white border border-github-border hover:border-github-danger text-[10px] px-2.5 py-1 rounded transition">削除</button>
-                                            </form>
-                                        <?php else: ?>
-                                            <span class="text-[9px] text-github-muted">編集不可(1時間経過済)</span>
-                                        <?php endif; ?>
-                                    </div>
-                                </div>
-
-                                <!-- 本文 -->
-                                <div class="text-xs text-white leading-relaxed whitespace-pre-wrap mt-2"><?= htmlspecialchars($post['body'], ENT_QUOTES, 'UTF-8') ?></div>
-
-                                <!-- 添付ファイル -->
-                                <?php if (!empty($post['file_path'])): 
-                                    $file_ext = strtolower(pathinfo($post['file_path'], PATHINFO_EXTENSION));
-                                ?>
-                                    <div class="mt-3 bg-[#0d1117] border border-[#30363d] p-3 rounded-lg max-w-sm">
-                                        <?php if (in_array($file_ext, ['jpg', 'jpeg', 'png', 'gif'])): ?>
-                                            <!-- 画像ファイルの場合 -->
-                                            <img src="/20260630/<?= htmlspecialchars($post['file_path'], ENT_QUOTES, 'UTF-8') ?>" class="max-h-48 rounded mb-2 w-auto object-contain bg-[#161b22]" alt="添付画像">
-                                        <?php endif; ?>
-                                        <div class="flex items-center justify-between text-xs">
-                                            <div class="flex items-center gap-2 text-white truncate">
-                                                <i data-lucide="file-text" class="w-4 h-4 text-[#58a6ff]"></i>
-                                                <span class="truncate"><?= htmlspecialchars($post['file_name'], ENT_QUOTES, 'UTF-8') ?></span>
-                                            </div>
-                                            <a href="/20260630/<?= htmlspecialchars($post['file_path'], ENT_QUOTES, 'UTF-8') ?>" download class="bg-[#21262d] hover:bg-[#30363d] text-white text-[10px] px-2 py-1 rounded flex items-center gap-1">
-                                                <i data-lucide="download" class="w-3 h-3"></i><span>DL</span>
-                                            </a>
-                                        </div>
-                                    </div>
-                                <?php endif; ?>
-
-                                <!-- 参考URL -->
-                                <?php if (!empty($post['url'])): ?>
-                                    <div class="mt-2.5 text-xs flex items-center gap-1.5 text-[#58a6ff]">
-                                        <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
-                                        <a href="<?= htmlspecialchars($post['url'], ENT_QUOTES, 'UTF-8') ?>" target="_blank" rel="noopener noreferrer" class="hover:underline truncate max-w-md"><?= htmlspecialchars($post['url'], ENT_QUOTES, 'UTF-8') ?></a>
-                                    </div>
-                                <?php endif; ?>
-
-                                <!-- プログラムコード -->
-                                <?php if (!empty($post['code'])): ?>
-                                    <div class="mt-3 border border-[#30363d] rounded overflow-hidden">
-                                        <div class="bg-[#161b22] px-3 py-1 border-b border-[#30363d] text-[10px] text-[#8b949e] font-mono flex items-center justify-between">
-                                            <span>CODE VIEW</span>
-                                            <button onclick="copyCode(this)" class="hover:text-white flex items-center gap-1"><i data-lucide="copy" class="w-3 h-3"></i>コピー</button>
-                                        </div>
-                                        <pre class="bg-[#0d1117] p-3 text-xs text-[#e6edf3] font-mono overflow-x-auto whitespace-pre leading-relaxed"><code><?= htmlspecialchars($post['code'], ENT_QUOTES, 'UTF-8') ?></code></pre>
-                                    </div>
-                                <?php endif; ?>
-                            </div>
-
-                            <!-- リプライセクション -->
-                            <div class="bg-[#161b22]/30">
-                                <?php foreach ($post['replies'] as $reply): 
-                                    $is_reply_author = $reply['author_id'] === $user_id;
-                                    $reply_elapsed = time() - strtotime($reply['created_at']);
-                                    $can_edit_delete_reply = $is_teacher || ($is_reply_author && $reply_elapsed <= 3600);
-                                ?>
-                                    <div class="border-t border-[#30363d] p-3.5 text-xs">
-                                        <div class="flex items-center justify-between mb-1.5">
-                                            <div class="flex items-center gap-2">
-                                                <div class="w-6 h-6 rounded-full bg-[#161b22] border border-[#30363d] flex items-center justify-center font-bold text-[10px] text-github-success">
-                                                    <?= ($reply['author_role'] === 'teacher') ? 'T' : htmlspecialchars(mb_substr($reply['author_name'], 0, 1), ENT_QUOTES, 'UTF-8') ?>
-                                                </div>
-                                                <span class="font-bold text-white"><?= htmlspecialchars($reply['author_name'], ENT_QUOTES, 'UTF-8') ?></span>
-                                                <?php if ($reply['author_role'] === 'teacher'): ?>
-                                                    <span class="text-[8px] bg-[#2ea44f]/10 border border-[#2ea44f]/30 text-[#2ea44f] px-1 py-0.5 rounded">指導員/管理者</span>
-                                                <?php endif; ?>
-                                                <span class="text-[9px] text-[#8b949e] font-mono"><?= date('m/d H:i', strtotime($reply['created_at'])) ?></span>
-                                            </div>
-
-                                            <?php if ($can_edit_delete_reply): ?>
-                                                <form action="/20260630/?action=delete_reply" method="POST" onsubmit="return confirm('コメントを削除しますか？');">
-                                                    <input type="hidden" name="reply_id" value="<?= $reply['id'] ?>">
-                                                    <button type="submit" class="text-github-danger hover:underline text-[10px]">削除</button>
-                                                </form>
-                                            <?php endif; ?>
-                                        </div>
-                                        <div class="text-[#c9d1d9] whitespace-pre-wrap leading-relaxed pl-8"><?= htmlspecialchars($reply['body'], ENT_QUOTES, 'UTF-8') ?></div>
-                                    </div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">学習言語 <span class="text-red-500">*</span></label>
+                            <select name="curriculum_id" id="post-curriculum-select" required onchange="updatePostTasks()"
+                                    class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs focus:border-[#0969da] focus:ring-1 focus:ring-[#0969da] focus:outline-none transition bg-white">
+                                <option value="">選択してください</option>
+                                <?php foreach ($studentCurriculums as $sc): ?>
+                                    <option value="<?php echo $sc['id']; ?>"><?php echo htmlspecialchars($sc['name']); ?></option>
                                 <?php endforeach; ?>
-                            </div>
-
-                            <!-- リプライ入力フォーム -->
-                            <div class="p-3 bg-[#161b22]/50 border-t border-[#30363d]">
-                                <form action="/20260630/?action=create_reply" method="POST" class="flex gap-2">
-                                    <input type="hidden" name="post_id" value="<?= $post['id'] ?>">
-                                    <input type="text" name="body" placeholder="<?= $is_teacher ? '先生としてアドバイスを指導返信する...' : '進捗にコメント・質問する...' ?>" required class="flex-1 bg-[#0d1117] border border-[#30363d] rounded px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#58a6ff]">
-                                    <button type="submit" class="bg-[#21262d] border border-[#30363d] hover:bg-[#30363d] text-white px-4 py-2 rounded text-xs font-semibold flex items-center gap-1.5 shrink-0 transition">
-                                        <i data-lucide="corner-down-left" class="w-3.5 h-3.5"></i><span>送信</span>
-                                    </button>
-                                </form>
-                            </div>
+                            </select>
                         </div>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">学習内容（タスク） <span class="text-red-500">*</span></label>
+                            <select name="task_id" id="post-task-select" required disabled
+                                    class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs focus:border-[#0969da] focus:ring-1 focus:ring-[#0969da] focus:outline-none transition bg-white">
+                                <option value="">まず言語を選択してください</option>
+                            </select>
+                        </div>
+                    </div>
 
+                    <!-- 本文 -->
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">進捗詳細・質問内容 <span class="text-red-500">*</span></label>
+                        <textarea name="content" required rows="4" placeholder="（例）カリキュラムの関数部分に到達しました。引数の考え方にまだ少し不安があります。"
+                                  class="w-full border border-gray-300 rounded px-3 py-2 text-xs focus:border-[#0969da] focus:ring-1 focus:ring-[#0969da] focus:outline-none transition"></textarea>
+                    </div>
+
+                    <!-- ソースコード（エディタライク） -->
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">ソースコード（オプション：等幅フォント & シンタックス風表示用）</label>
+                        <textarea name="code_content" rows="6" placeholder="<?php echo htmlspecialchars("<?php\n// ここにプログラムを記述できます\n?>"); ?>"
+                                  class="w-full border border-gray-300 rounded p-2 text-xs code-font bg-gray-50 focus:bg-white focus:border-[#0969da] focus:ring-1 focus:ring-[#0969da] focus:outline-none transition"></textarea>
+                    </div>
+
+                    <!-- ファイル添付 & 参考URL & 公開範囲 -->
+                    <div class="grid grid-cols-3 gap-4 border-t border-gray-100 pt-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">画像・ファイルの添付 (最大5MB)</label>
+                            <input type="file" name="attached_file" accept=".jpg,.jpeg,.png,.gif,.txt,.pdf"
+                                   class="w-full text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">参考URL</label>
+                            <input type="url" name="reference_url" placeholder="https://..."
+                                   class="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:border-[#0969da] focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">開示公開範囲（属性別制御）</label>
+                            <select name="visibility_type"
+                                    class="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:border-[#0969da] focus:outline-none bg-white">
+                                <option value="public">🌍 全体公開</option>
+                                <?php foreach ($distinctTags as $tag): ?>
+                                    <option value="<?php echo htmlspecialchars($tag); ?>">🔒 【属性宛】<?php echo htmlspecialchars($tag); ?>のみ開示</option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-end pt-2">
+                        <button type="submit" class="bg-[#2da44e] hover:bg-[#2c974b] text-white text-xs font-semibold px-4 py-2 rounded shadow-sm transition">
+                            報告・質問を投稿する
+                        </button>
+                    </div>
+                </form>
             </div>
         <?php endif; ?>
+    <?php endif; ?>
 
-        <!-- ==========================================
-             2. 学習進捗・可視化タブ
-             ========================================== -->
-        <?php if ($tab === 'analytics'): ?>
-            <div class="space-y-8 max-w-4xl mx-auto">
-                
-                <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-6">
-                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-[#30363d] pb-4 mb-6">
-                        <div>
-                            <h2 class="text-lg font-bold text-white flex items-center gap-2">
-                                <i data-lucide="trending-up" class="w-5 h-5 text-[#58a6ff]"></i>
-                                <span><?= htmlspecialchars($user_name, ENT_QUOTES, 'UTF-8') ?> さんの学習進捗ポートフォリオ</span>
-                            </h2>
-                            <p class="text-xs text-[#8b949e] mt-1">先生からの評価進捗度と、GitHubスタイルの活動カレンダー</p>
-                        </div>
-                        
-                        <?php if ($role === 'student'): ?>
-                            <div class="mt-4 md:mt-0 flex gap-2">
-                                <div class="bg-[#0d1117] px-4 py-2 border border-[#30363d] rounded text-center">
-                                    <span class="text-[10px] text-github-muted block uppercase font-semibold">総合習熟度</span>
-                                    <span class="text-xl font-bold font-mono text-[#58a6ff]"><?= $overall_average ?>%</span>
+    <!-- 3. フィード表示 -->
+    <div class="space-y-4">
+        <h3 class="font-bold text-base text-gray-800 flex items-center space-x-2">
+            <i data-lucide="activity" class="w-5 h-5 text-gray-600"></i>
+            <span>最新進捗タイムライン</span>
+        </h3>
+
+        <?php if (empty($feed)): ?>
+            <div class="bg-white border border-[#d0d7de] rounded-lg p-10 text-center text-gray-400 text-sm shadow-sm">
+                <i data-lucide="inbox" class="w-10 h-10 mx-auto mb-2 text-gray-300"></i>
+                <p>表示可能な投稿はありません。</p>
+            </div>
+        <?php else: ?>
+            <?php foreach ($feed as $post): ?>
+                <div class="bg-white border border-[#d0d7de] rounded-lg shadow-sm overflow-hidden">
+                    <!-- 投稿ヘッダー -->
+                    <div class="px-5 py-4 border-b border-gray-100 flex items-start justify-between bg-gray-50/50">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center font-bold text-gray-700">
+                                <?php echo mb_substr($post['display_name'], 0, 1); ?>
+                            </div>
+                            <div>
+                                <div class="flex items-center space-x-2">
+                                    <span class="font-bold text-sm text-[#24292f]"><?php echo htmlspecialchars($post['display_name']); ?></span>
+                                    <span class="text-xs text-gray-500">@<?php echo htmlspecialchars($post['username']); ?></span>
                                 </div>
+                                <div class="flex items-center space-x-2 mt-1">
+                                    <!-- 進捗タグ -->
+                                    <span class="bg-[#ddf4ff] text-[#0969da] border border-[#b4e1fc] text-[10px] font-semibold px-1.5 py-0.5 rounded">
+                                        <?php echo htmlspecialchars($post['curriculum_name']); ?> ＞ <?php echo htmlspecialchars($post['task_name']); ?>
+                                    </span>
+                                    <span class="text-[10px] text-gray-400"><?php echo date('Y/m/d H:i', strtotime($post['created_at'])); ?></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 編集・削除ボタン (投稿後1時間以内に限定) -->
+                        <?php if ($post['can_edit_delete']): ?>
+                            <div class="flex space-x-1">
+                                <button onclick="openEditPostModal(<?php echo htmlspecialchars(json_encode($post)); ?>)" class="text-gray-400 hover:text-blue-600 p-1 rounded hover:bg-gray-100 transition">
+                                    <i data-lucide="edit" class="w-4 h-4"></i>
+                                </button>
+                                <form action="<?php echo BASE_URL; ?>post/delete" method="POST" onsubmit="return confirm('この投稿を完全に削除しますか？添付ファイルも削除されます。');" class="inline">
+                                    <input type="hidden" name="post_id" value="<?php echo $post['id']; ?>">
+                                    <button type="submit" class="text-gray-400 hover:text-red-600 p-1 rounded hover:bg-gray-100 transition">
+                                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                    </button>
+                                </form>
                             </div>
                         <?php endif; ?>
                     </div>
 
-                    <!-- 2-1. コントリビューション風カレンダー (学習進捗の「草」) -->
-                    <div class="mb-8">
-                        <h3 class="text-xs font-semibold text-white mb-3 flex items-center gap-1.5">
-                            <i data-lucide="calendar" class="w-4 h-4 text-[#2ea44f]"></i>
-                            <span>学習アクティビティ（過去10週間の投稿頻度）</span>
-                        </h3>
-                        <div class="bg-[#0d1117] border border-[#30363d] p-4 rounded-lg overflow-x-auto">
-                            <div class="flex gap-2 items-center justify-between text-[11px] text-[#8b949e] mb-3 font-mono">
-                                <span>← 過去の日付</span>
-                                <div class="flex items-center gap-1.5">
-                                    <span>Less</span>
-                                    <div class="w-2.5 h-2.5 bg-[#161b22] border border-[#30363d] rounded-[2px]"></div>
-                                    <div class="w-2.5 h-2.5 bg-[#0e4429] rounded-[2px]"></div>
-                                    <div class="w-2.5 h-2.5 bg-[#006d32] rounded-[2px]"></div>
-                                    <div class="w-2.5 h-2.5 bg-[#26a641] rounded-[2px]"></div>
-                                    <div class="w-2.5 h-2.5 bg-[#39d353] rounded-[2px]"></div>
-                                    <span>More</span>
+                    <!-- 投稿本文 -->
+                    <div class="p-5">
+                        <p class="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap mb-4"><?php echo htmlspecialchars($post['content']); ?></p>
+
+                        <!-- コードブロック（行番号と等幅フォントを模倣） -->
+                        <?php if (!empty($post['code_content'])): ?>
+                            <div class="border border-[#d0d7de] rounded-lg overflow-hidden mb-4 shadow-inner">
+                                <div class="bg-gray-50 border-b border-[#d0d7de] px-4 py-1.5 text-xs text-gray-500 flex justify-between items-center">
+                                    <span class="font-semibold code-font">Code Segment</span>
+                                    <button onclick="copyCode(this)" class="hover:text-gray-800 flex items-center space-x-1">
+                                        <i data-lucide="copy" class="w-3.5 h-3.5"></i><span>Copy</span>
+                                    </button>
+                                </div>
+                                <div class="bg-[#f6f8fa] p-4 font-mono text-xs overflow-x-auto text-[#24292f] leading-5 flex">
+                                    <!-- 行番号シミュレーション -->
+                                    <div class="select-none text-gray-400 text-right pr-4 border-r border-[#d0d7de] mr-4 min-w-[20px]">
+                                        <?php 
+                                        $lines = explode("\n", $post['code_content']);
+                                        for ($i = 1; $i <= count($lines); $i++) {
+                                            echo $i . "<br>";
+                                        }
+                                        ?>
+                                    </div>
+                                    <!-- コード本体 -->
+                                    <pre class="flex-grow whitespace-pre"><code class="language-php"><?php echo htmlspecialchars($post['code_content']); ?></code></pre>
                                 </div>
                             </div>
-                            
-                            <!-- 草カレンダー生成 (PHPによる過去70日の活動集計から動的配列をJSへ展開) -->
-                            <?php 
-                            $raw_grass = $this->curriculumModel->getContributionData($user_id);
-                            // 過去70日分の日付配列を作成してPHPからJSへバインド
-                            $grass_data = [];
-                            $now = time();
-                            for ($i = 69; $i >= 0; $i--) {
-                                $date_key = date('Y-m-d', $now - ($i * 24 * 60 * 60));
-                                $grass_data[$date_key] = isset($raw_grass[$date_key]) ? $raw_grass[$date_key] : 0;
-                            }
-                            ?>
-                            <div id="contribution-grid" class="grid grid-flow-col grid-rows-7 gap-1 justify-start">
-                                <!-- JavaScriptで grass_data に応じてマスの色を生成してレンダリング -->
+                        <?php endif; ?>
+
+                        <!-- 添付ファイル表示 -->
+                        <?php if (!empty($post['file_path'])): ?>
+                            <div class="mt-4 p-3 bg-gray-50 border border-gray-200 rounded-lg flex items-center justify-between">
+                                <div class="flex items-center space-x-2 text-xs text-gray-700">
+                                    <i data-lucide="paperclip" class="w-4 h-4 text-gray-500"></i>
+                                    <span class="font-semibold"><?php echo htmlspecialchars($post['file_name']); ?></span>
+                                </div>
+                                <?php 
+                                $ext = strtolower(pathinfo($post['file_path'], PATHINFO_EXTENSION));
+                                if (in_array($ext, ['jpg', 'jpeg', 'png', 'gif'])): 
+                                ?>
+                                    <a href="<?php echo BASE_URL . $post['file_path']; ?>" target="_blank" class="block max-w-[250px] border border-gray-200 rounded hover:opacity-90">
+                                        <img src="<?php echo BASE_URL . $post['file_path']; ?>" alt="添付画像" class="max-h-[120px] rounded object-cover">
+                                    </a>
+                                <?php else: ?>
+                                    <a href="<?php echo BASE_URL . $post['file_path']; ?>" download class="text-xs text-blue-600 hover:underline flex items-center space-x-1 font-semibold">
+                                        <i data-lucide="download" class="w-3.5 h-3.5"></i><span>ダウンロード</span>
+                                    </a>
+                                <?php endif; ?>
                             </div>
-                            <script>
-                                const grassData = <?= json_encode($grass_data) ?>;
-                                const gridContainer = document.getElementById('contribution-grid');
-                                gridContainer.innerHTML = '';
-                                
-                                Object.keys(grassData).forEach(date => {
-                                    const count = grassData[date];
-                                    let bgClass = 'bg-[#161b22] border border-[#30363d]';
-                                    if (count >= 5) bgClass = 'bg-[#39d353]';
-                                    else if (count >= 3) bgClass = 'bg-[#26a641]';
-                                    else if (count >= 2) bgClass = 'bg-[#006d32]';
-                                    else if (count >= 1) bgClass = 'bg-[#0e4429]';
-                                    
-                                    const block = document.createElement('div');
-                                    block.className = `w-3.5 h-3.5 rounded-[2px] transition-colors ${bgClass}`;
-                                    block.title = `${date} : 活動数 ${count}回`;
-                                    gridContainer.appendChild(block);
-                                });
-                            </script>
-                            <p class="text-[10px] text-[#8b949e] mt-3 text-right">※掲示板の進捗報告・質問リプライなどシステム内での活動実績が反映されます。</p>
-                        </div>
+                        <?php endif; ?>
+
+                        <!-- 参考URLリンク -->
+                        <?php if (!empty($post['reference_url'])): ?>
+                            <div class="mt-3 text-xs flex items-center space-x-1 text-[#0969da] hover:underline">
+                                <i data-lucide="link" class="w-3.5 h-3.5"></i>
+                                <a href="<?php echo htmlspecialchars($post['reference_url']); ?>" target="_blank" rel="noopener noreferrer">
+                                    <?php echo htmlspecialchars($post['reference_url']); ?>
+                                </a>
+                            </div>
+                        <?php endif; ?>
                     </div>
 
-                    <!-- 2-2. 分野別習熟度評価 (生徒のみ) -->
-                    <?php if ($role === 'student'): ?>
-                    <div>
-                        <h3 class="text-xs font-semibold text-white mb-4 flex items-center gap-1.5">
-                            <i data-lucide="target" class="w-4 h-4 text-[#bc8cff]"></i>
-                            <span>カリキュラム分野別・習熟度評価（先生査定）</span>
-                        </h3>
-                        <div class="space-y-4">
-                            <?php if (empty($study_languages)): ?>
-                                <p class="text-xs text-github-muted italic text-center py-4">学習中のカリキュラムがありません。</p>
-                            <?php else: ?>
-                                <?php foreach ($study_languages as $lang): 
-                                    $tasks = $this->curriculumModel->getTasksByLanguage($lang);
-                                    $student_prog = $this->curriculumModel->getStudentProgress($user_id);
-                                ?>
-                                <div class="bg-[#0d1117] border border-[#30363d] p-4 rounded-lg space-y-3">
-                                    <div class="flex justify-between items-center border-b border-[#30363d] pb-2 mb-2">
-                                        <span class="text-xs font-bold text-white flex items-center gap-1.5">
-                                            <i data-lucide="folder-code" class="w-4 h-4 text-[#58a6ff]"></i><span><?= htmlspecialchars($lang, ENT_QUOTES, 'UTF-8') ?></span>
-                                        </span>
+                    <!-- リプライ（指導・返信）セクション -->
+                    <div class="bg-gray-50/50 border-t border-gray-100 px-5 py-4">
+                        <h5 class="text-xs font-bold text-gray-600 mb-3 flex items-center space-x-1">
+                            <i data-lucide="messages-square" class="w-4 h-4"></i>
+                            <span>指導リプライ・コメント (<?php echo count($post['replies']); ?>)</span>
+                        </h5>
+
+                        <div class="space-y-3 mb-4">
+                            <?php foreach ($post['replies'] as $reply): ?>
+                                <div class="bg-white border border-[#d0d7de]/60 rounded-lg p-3 text-xs relative group">
+                                    <div class="flex items-center justify-between mb-1.5">
+                                        <div class="flex items-center space-x-2">
+                                            <span class="font-bold text-[#24292f]"><?php echo htmlspecialchars($reply['display_name']); ?></span>
+                                            <?php if ($reply['user_role'] === 'teacher'): ?>
+                                                <span class="bg-[#dafbe1] text-[#1a7f37] text-[9px] font-bold px-1 rounded">指導官</span>
+                                            <?php endif; ?>
+                                            <span class="text-gray-400 text-[10px]"><?php echo date('m/d H:i', strtotime($reply['created_at'])); ?></span>
+                                        </div>
+                                        
+                                        <!-- 返信削除 -->
+                                        <?php if ($reply['can_edit_delete']): ?>
+                                            <div class="opacity-0 group-hover:opacity-100 transition flex space-x-1">
+                                                <form action="<?php echo BASE_URL; ?>reply" method="POST" onsubmit="return confirm('この返信を削除しますか？');" class="inline">
+                                                    <input type="hidden" name="action" value="delete">
+                                                    <input type="hidden" name="reply_id" value="<?php echo $reply['id']; ?>">
+                                                    <button type="submit" class="text-gray-400 hover:text-red-600">
+                                                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                                    </button>
+                                                </form>
+                                            </div>
+                                        <?php endif; ?>
                                     </div>
-                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <?php foreach ($tasks as $task): 
-                                            $prog_val = isset($student_prog[$lang][$task]) ? $student_prog[$lang][$task] : 0;
-                                            
-                                            // カラー分岐
-                                            $bar_color = 'bg-[#58a6ff]';
-                                            if ($prog_val === 100) $bar_color = 'bg-[#2ea44f]';
-                                            elseif ($prog_val >= 50) $bar_color = 'bg-github-attention';
-                                            elseif ($prog_val > 0) $bar_color = 'bg-orange-500';
-                                        ?>
-                                            <div class="space-y-1">
-                                                <div class="flex justify-between items-center text-[11px]">
-                                                    <span class="text-white font-mono"><?= htmlspecialchars($task, ENT_QUOTES, 'UTF-8') ?></span>
-                                                    <span class="font-bold text-white font-mono"><?= $prog_val ?>%</span>
+                                    <p class="text-gray-700 leading-relaxed whitespace-pre-wrap"><?php echo htmlspecialchars($reply['content']); ?></p>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+
+                        <!-- 指導・返信入力フォーム (先生、または自身の返信用) -->
+                        <form action="<?php echo BASE_URL; ?>reply" method="POST" class="mt-2">
+                            <input type="hidden" name="action" value="create">
+                            <input type="hidden" name="post_id" value="<?php echo $post['id']; ?>">
+                            <div class="flex items-end space-x-2">
+                                <textarea name="content" required rows="1" placeholder="指導・フィードバックを記入..."
+                                          class="flex-grow border border-gray-300 rounded-md p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white transition resize-y"></textarea>
+                                <button type="submit" class="bg-[#24292f] hover:bg-[#1f2328] text-white text-xs font-semibold px-3 py-2 rounded transition flex items-center space-x-1 h-fit">
+                                    <i data-lucide="send" class="w-3.5 h-3.5"></i><span>送信</span>
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        <?php endif; ?>
+    </div>
+
+<!-- ==========================================
+     タブ2: カリキュラム学習登録 (生徒専用)
+     ========================================== -->
+<?php elseif ($current_tab === 'curriculum' && $_SESSION['role'] === 'student'): ?>
+    
+    <div class="bg-white border border-[#d0d7de] rounded-lg p-5 shadow-sm">
+        <h3 class="font-bold text-base text-[#24292f] pb-3 border-b border-gray-100 flex items-center space-x-2 mb-4">
+            <i data-lucide="book-open" class="w-5 h-5 text-[#3fb950]"></i>
+            <span>学習言語の選択・カリキュラム登録</span>
+        </h3>
+        <p class="text-xs text-gray-500 mb-6 leading-relaxed">
+            先生が事前に登録したマスタデータから、自分が現在学習を進めている言語を選択してプロフィールに登録します。<br>
+            登録すると、言語内の詳細タスク進捗状況と先生からの評価（％）が可視化されるようになります。
+        </p>
+
+        <div class="grid grid-cols-2 gap-6">
+            <!-- 登録可能マスタリスト -->
+            <div class="border border-gray-200 rounded-lg p-4 bg-gray-50/50">
+                <h4 class="font-bold text-xs text-gray-700 mb-3 flex items-center space-x-1">
+                    <i data-lucide="plus-circle" class="w-4 h-4"></i><span>新しく言語を登録する</span>
+                </h4>
+                
+                <form action="<?php echo BASE_URL; ?>curriculum/select" method="POST" class="space-y-3">
+                    <select name="curriculum_id" required class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs bg-white focus:outline-none focus:border-blue-500">
+                        <option value="">言語マスタを選択...</option>
+                        <?php 
+                        // すでに学習済みの言語を除外
+                        $my_curr_ids = array_column($studentCurriculums, 'id');
+                        foreach ($curriculumsWithTasks as $c): 
+                            if (in_array($c['id'], $my_curr_ids)) continue;
+                        ?>
+                            <option value="<?php echo $c['id']; ?>"><?php echo htmlspecialchars($c['name']); ?> (タスク数: <?php echo count($c['tasks']); ?>)</option>
+                        <?php endforeach; ?>
+                    </select>
+                    <button type="submit" class="w-full bg-[#2da44e] hover:bg-[#2c974b] text-white text-xs font-semibold py-2 rounded transition">
+                        学習対象として登録追加する
+                    </button>
+                </form>
+            </div>
+
+            <!-- 現在登録中の言語進捗状況 -->
+            <div class="border border-gray-200 rounded-lg p-4 bg-white">
+                <h4 class="font-bold text-xs text-gray-700 mb-3 flex items-center space-x-1">
+                    <i data-lucide="check-circle-2" class="w-4 h-4 text-green-600"></i><span>登録中のカリキュラムと指導評価</span>
+                </h4>
+
+                <?php if (empty($studentCurriculums)): ?>
+                    <p class="text-xs text-gray-400 py-6 text-center">登録中の言語はありません</p>
+                <?php else: ?>
+                    <div class="space-y-4">
+                        <?php foreach ($studentCurriculums as $sc): ?>
+                            <div class="border border-gray-150 rounded p-3">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="font-bold text-xs text-[#24292f]"><?php echo htmlspecialchars($sc['name']); ?></span>
+                                    <span class="text-xs bg-[#dafbe1] text-[#1a7f37] font-semibold px-2 py-0.5 rounded-full">全体進捗: <?php echo $sc['average_proficiency']; ?>%</span>
+                                </div>
+                                
+                                <!-- 詳細タスクアコーディオン表示 -->
+                                <div class="space-y-2 mt-2 border-t border-gray-100 pt-2">
+                                    <?php foreach ($sc['tasks'] as $task): ?>
+                                        <div class="flex items-center justify-between text-[11px] text-gray-600">
+                                            <span>├ <?php echo htmlspecialchars($task['task_name']); ?></span>
+                                            <div class="flex items-center space-x-2">
+                                                <div class="w-20 bg-gray-100 h-1.5 rounded-full overflow-hidden">
+                                                    <div class="bg-[#3fb950] h-full" style="width: <?php echo $task['proficiency']; ?>%"></div>
                                                 </div>
-                                                <div class="w-full bg-[#161b22] rounded-full h-2 overflow-hidden border border-[#30363d]">
-                                                    <div class="<?= $bar_color ?> h-full rounded-full transition-all duration-500" style="width: <?= $prog_val ?>%"></div>
+                                                <span class="font-bold text-gray-800"><?php echo $task['proficiency']; ?>%</span>
+                                            </div>
+                                        </div>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+
+<!-- ==========================================
+     タブ3: 友達・属性登録
+     ========================================== -->
+<?php elseif ($current_tab === 'friends'): ?>
+    
+    <div class="bg-white border border-[#d0d7de] rounded-lg p-5 shadow-sm">
+        <h3 class="font-bold text-base text-[#24292f] pb-3 border-b border-gray-100 flex items-center space-x-2 mb-4">
+            <i data-lucide="users" class="w-5 h-5 text-gray-600"></i>
+            <span>友達と繋がる & 属性タグ設定</span>
+        </h3>
+        <p class="text-xs text-gray-500 mb-6 leading-relaxed">
+            友達を「ユーザー検索」または「招待URL」から登録し、独自の属性（「友達」「グループA」など）を設定できます。<br>
+            <strong>プライバシー設計：</strong>設定した属性情報や送信先の詳細は自分以外には一切開示されません。
+        </p>
+
+        <div class="grid grid-cols-2 gap-6">
+            <!-- ユーザー検索登録 -->
+            <div class="border border-gray-200 rounded-lg p-4 bg-gray-50/50">
+                <h4 class="font-bold text-xs text-gray-700 mb-3 flex items-center space-x-1">
+                    <i data-lucide="search" class="w-4 h-4"></i><span>生徒ユーザーを探す</span>
+                </h4>
+                
+                <form action="?tab=friends" method="GET" class="flex space-x-2 mb-4">
+                    <input type="hidden" name="tab" value="friends">
+                    <input type="text" name="search_query" required value="<?php echo htmlspecialchars($searchQuery); ?>" placeholder="ID、表示名で検索..."
+                           class="flex-grow border border-gray-300 rounded px-3 py-1.5 text-xs bg-white focus:outline-none">
+                    <button type="submit" class="bg-[#24292f] hover:bg-[#1f2328] text-white text-xs font-semibold px-4 py-1.5 rounded transition">
+                        検索
+                    </button>
+                </form>
+
+                <!-- 検索結果 -->
+                <?php if (!empty($searchQuery)): ?>
+                    <div class="space-y-2 max-h-[250px] overflow-y-auto">
+                        <p class="text-[10px] text-gray-500">「<?php echo htmlspecialchars($searchQuery); ?>」の検索結果 (<?php echo count($searchResults); ?>件)</p>
+                        <?php if (empty($searchResults)): ?>
+                            <p class="text-xs text-gray-400 py-4 text-center">該当するユーザーは見つかりませんでした</p>
+                        <?php else: ?>
+                            <?php foreach ($searchResults as $row): ?>
+                                <div class="bg-white border border-gray-200 rounded p-2.5 flex items-center justify-between text-xs">
+                                    <div>
+                                        <p class="font-bold"><?php echo htmlspecialchars($row['display_name']); ?></p>
+                                        <p class="text-[10px] text-gray-400">@<?php echo htmlspecialchars($row['username']); ?></p>
+                                    </div>
+                                    <form action="<?php echo BASE_URL; ?>friends/manage" method="POST" class="flex items-center space-x-1">
+                                        <input type="hidden" name="action" value="add_or_update">
+                                        <input type="hidden" name="friend_id" value="<?php echo $row['id']; ?>">
+                                        <input type="text" name="attribute_tag" value="友達" required placeholder="属性を設定" 
+                                               class="border border-gray-300 rounded px-2 py-1 text-[11px] w-20 text-center">
+                                        <button type="submit" class="bg-[#2da44e] hover:bg-[#2c974b] text-white font-semibold px-2 py-1 rounded text-[11px]">
+                                            追加
+                                        </button>
+                                    </form>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </div>
+                <?php endif; ?>
+            </div>
+
+            <!-- 登録友達一覧と属性変更 -->
+            <div class="border border-gray-200 rounded-lg p-4 bg-white">
+                <h4 class="font-bold text-xs text-gray-700 mb-3 flex items-center space-x-1">
+                    <i data-lucide="contact" class="w-4 h-4 text-blue-600"></i><span>友達リスト（登録・属性タグ）</span>
+                </h4>
+
+                <?php if (empty($friends)): ?>
+                    <p class="text-xs text-gray-400 py-10 text-center">登録されている友達はいません。</p>
+                <?php else: ?>
+                    <div class="space-y-3 max-h-[350px] overflow-y-auto">
+                        <?php foreach ($friends as $friend): ?>
+                            <div class="border border-gray-150 rounded p-3 flex items-center justify-between text-xs">
+                                <div>
+                                    <p class="font-bold"><?php echo htmlspecialchars($friend['display_name']); ?></p>
+                                    <p class="text-[10px] text-gray-400">@<?php echo htmlspecialchars($friend['username']); ?></p>
+                                    <span class="inline-block bg-blue-50 text-blue-700 border border-blue-100 text-[10px] font-semibold px-1.5 py-0.2 rounded mt-1.5">
+                                        🏷️ <?php echo htmlspecialchars($friend['attribute_tag']); ?>
+                                    </span>
+                                </div>
+
+                                <div class="flex items-center space-x-2">
+                                    <!-- 属性編集フォーム -->
+                                    <form action="<?php echo BASE_URL; ?>friends/manage" method="POST" class="flex items-center space-x-1">
+                                        <input type="hidden" name="action" value="add_or_update">
+                                        <input type="hidden" name="friend_id" value="<?php echo $friend['friend_id']; ?>">
+                                        <input type="text" name="attribute_tag" value="<?php echo htmlspecialchars($friend['attribute_tag']); ?>" required 
+                                               class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-20 text-center focus:border-blue-500">
+                                        <button type="submit" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold px-2 py-0.5 rounded text-[10px] border border-gray-300">
+                                            変更
+                                        </button>
+                                    </form>
+
+                                    <!-- 削除 -->
+                                    <form action="<?php echo BASE_URL; ?>friends/manage" method="POST" onsubmit="return confirm('この友達登録を削除しますか？');">
+                                        <input type="hidden" name="action" value="delete">
+                                        <input type="hidden" name="friend_id" value="<?php echo $friend['friend_id']; ?>">
+                                        <button type="submit" class="text-red-500 hover:text-red-700 p-1">
+                                            <i data-lucide="user-x" class="w-4 h-4"></i>
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+
+<!-- ==========================================
+     タブ4: 生徒進捗一覧・評価管理 (先生専用)
+     ========================================== -->
+<?php elseif ($current_tab === 'teacher_students' && $_SESSION['role'] === 'teacher'): ?>
+    
+    <div class="bg-white border border-[#d0d7de] rounded-lg p-5 shadow-sm">
+        <h3 class="font-bold text-base text-[#24292f] pb-3 border-b border-gray-100 flex items-center space-x-2 mb-4">
+            <i data-lucide="graduation-cap" class="w-5 h-5 text-gray-700"></i>
+            <span>生徒全体の進捗確認＆習熟度（％）評価更新</span>
+        </h3>
+
+        <div class="grid grid-cols-3 gap-6">
+            <!-- 生徒一覧選択サイドバー -->
+            <div class="border border-gray-200 rounded-lg p-3 bg-gray-50/50">
+                <h4 class="font-bold text-xs text-gray-700 mb-3">生徒リスト</h4>
+                <div class="space-y-2">
+                    <?php foreach ($allStudents as $student): ?>
+                        <a href="?tab=teacher_students&view_student_id=<?php echo $student['id']; ?>"
+                           class="block p-3 rounded border text-xs transition <?php echo (isset($_GET['view_student_id']) && $_GET['view_student_id'] == $student['id']) ? 'bg-blue-50 border-blue-300 text-blue-900 font-bold' : 'bg-white border-gray-200 hover:bg-gray-50 text-gray-700' ?>">
+                            <div class="flex justify-between items-center">
+                                <span><?php echo htmlspecialchars($student['display_name']); ?></span>
+                                <span class="text-[10px] text-gray-400">@<?php echo htmlspecialchars($student['username']); ?></span>
+                            </div>
+                        </a>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+
+            <!-- 選択された生徒の詳細カリキュラム進捗 & 評価更新フォーム -->
+            <div class="col-span-2 border border-gray-200 rounded-lg p-4 bg-white">
+                <?php 
+                $v_student_id = intval($_GET['view_student_id'] ?? 0);
+                if ($v_student_id === 0 && !empty($allStudents)) {
+                    $v_student_id = $allStudents[0]['id'];
+                }
+
+                $selected_student = null;
+                foreach ($allStudents as $s) {
+                    if ($s['id'] == $v_student_id) {
+                        $selected_student = $s;
+                        break;
+                    }
+                }
+
+                if (!$selected_student):
+                    echo "<p class='text-xs text-gray-400 text-center py-10'>表示する生徒が選択されていません</p>";
+                else:
+                ?>
+                    <div class="flex items-center justify-between pb-3 border-b border-gray-100 mb-4">
+                        <div>
+                            <h4 class="font-bold text-sm text-[#24292f]"><?php echo htmlspecialchars($selected_student['display_name']); ?> さんの学習状況</h4>
+                            <p class="text-xs text-gray-400">ユーザーID: @<?php echo htmlspecialchars($selected_student['username']); ?></p>
+                        </div>
+                        <a href="?tab=feed&view_student_id=<?php echo $selected_student['id']; ?>" class="bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold px-3 py-1.5 rounded border border-gray-300 transition flex items-center space-x-1">
+                            <i data-lucide="eye" class="w-3.5 h-3.5"></i><span>この生徒の進捗草を表示</span>
+                        </a>
+                    </div>
+
+                    <?php if (empty($selected_student['curriculums'])): ?>
+                        <p class="text-xs text-gray-400 text-center py-8">この生徒はまだ学習言語を登録していません。</p>
+                    <?php else: ?>
+                        <div class="space-y-6">
+                            <?php foreach ($selected_student['curriculums'] as $curr): ?>
+                                <div class="border border-gray-150 rounded p-4 bg-gray-50/20">
+                                    <div class="flex justify-between items-center mb-3">
+                                        <span class="font-bold text-xs text-[#0969da]"><?php echo htmlspecialchars($curr['name']); ?></span>
+                                        <span class="text-xs font-semibold text-green-700 bg-green-50 px-2.5 py-0.5 rounded-full">全体平均: <?php echo $curr['average_proficiency']; ?>%</span>
+                                    </div>
+
+                                    <!-- タスク別 習熟度数値更新 -->
+                                    <div class="space-y-3">
+                                        <?php foreach ($curr['tasks'] as $task): ?>
+                                            <div class="bg-white border border-gray-150 rounded p-3 flex items-center justify-between">
+                                                <div class="w-1/2">
+                                                    <p class="text-xs font-semibold text-gray-700"><?php echo htmlspecialchars($task['task_name']); ?></p>
+                                                    <div class="w-full bg-gray-100 h-1.5 rounded-full mt-1.5 overflow-hidden">
+                                                        <div class="bg-blue-500 h-full" style="width: <?php echo $task['proficiency']; ?>%"></div>
+                                                    </div>
                                                 </div>
+
+                                                <!-- 評価入力フォーム -->
+                                                <form action="<?php echo BASE_URL; ?>curriculum/update_proficiency" method="POST" class="flex items-center space-x-2">
+                                                    <input type="hidden" name="student_id" value="<?php echo $selected_student['id']; ?>">
+                                                    <input type="hidden" name="task_id" value="<?php echo $task['task_id']; ?>">
+                                                    <div class="flex items-center space-x-1">
+                                                        <input type="number" name="proficiency" min="0" max="100" value="<?php echo $task['proficiency']; ?>" required
+                                                               class="border border-gray-300 rounded px-2 py-1 text-xs w-16 text-center focus:ring-1 focus:ring-blue-500">
+                                                        <span class="text-xs text-gray-500">%</span>
+                                                    </div>
+                                                    <button type="submit" class="bg-[#24292f] hover:bg-[#1f2328] text-white font-semibold px-3 py-1 rounded text-[11px] transition">
+                                                        評定更新
+                                                    </button>
+                                                </form>
                                             </div>
                                         <?php endforeach; ?>
                                     </div>
                                 </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                    <?php endif; ?>
-                </div>
-
-                <!-- 2-3. 先生専用: 生徒全体の進捗一覧と％習熟度評価フォーム -->
-                <?php if ($role === 'teacher'): ?>
-                    <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-6">
-                        <div class="border-b border-[#30363d] pb-3 mb-4">
-                            <h3 class="text-base font-bold text-white flex items-center gap-2">
-                                <i data-lucide="shield-check" class="w-5 h-5 text-github-success"></i>
-                                <span>生徒進捗一覧 & 習熟度評価入力（先生パネル）</span>
-                            </h3>
-                            <p class="text-xs text-github-muted mt-1">生徒全員のカリキュラム進捗を一覧確認し、詳細タスク毎の習熟度（%）を更新・通知できます。</p>
-                        </div>
-
-                        <div class="overflow-x-auto">
-                            <table class="w-full text-left text-xs border-collapse">
-                                <thead>
-                                    <tr class="border-b border-[#30363d] bg-[#0d1117] text-[#8b949e]">
-                                        <th class="p-3">生徒ID</th>
-                                        <th class="p-3">生徒名</th>
-                                        <th class="p-3">学習中言語</th>
-                                        <th class="p-3">カリキュラム詳細評価（%）</th>
-                                    </tr>
-                                </thead>
-                                <tbody class="divide-y divide-[#30363d]">
-                                    <?php foreach ($all_students as $student): 
-                                        $s_langs = $this->curriculumModel->getStudentLanguages($student['id']);
-                                        $s_progress = $this->curriculumModel->getStudentProgress($student['id']);
-                                    ?>
-                                        <tr class="hover:bg-[#161b22]/50 transition">
-                                            <td class="p-3 font-mono font-bold text-[#58a6ff]"><?= htmlspecialchars($student['id'], ENT_QUOTES, 'UTF-8') ?></td>
-                                            <td class="p-3 text-white font-semibold"><?= htmlspecialchars($student['name'], ENT_QUOTES, 'UTF-8') ?></td>
-                                            <td class="p-3">
-                                                <?php foreach ($s_langs as $slang): ?>
-                                                    <span class="inline-block bg-[#58a6ff]/10 border border-[#58a6ff]/20 text-[#58a6ff] text-[10px] px-1.5 py-0.5 rounded font-bold font-mono mr-1 mb-1"><?= htmlspecialchars($slang, ENT_QUOTES, 'UTF-8') ?></span>
-                                                <?php endforeach; ?>
-                                            </td>
-                                            <td class="p-3 space-y-2">
-                                                <?php foreach ($s_langs as $slang): 
-                                                    $tasks = $this->curriculumModel->getTasksByLanguage($slang);
-                                                ?>
-                                                    <div class="bg-[#0d1117] p-2 border border-[#30363d] rounded max-w-md">
-                                                        <div class="font-bold text-[#8b949e] mb-1">● <?= htmlspecialchars($slang, ENT_QUOTES, 'UTF-8') ?></div>
-                                                        <div class="space-y-1.5">
-                                                            <?php foreach ($tasks as $task): 
-                                                                $curr_val = isset($s_progress[$slang][$task]) ? $s_progress[$slang][$task] : 0;
-                                                            ?>
-                                                                <form action="/20260630/?action=update_progress" method="POST" class="flex items-center justify-between gap-2 text-[11px]">
-                                                                    <input type="hidden" name="student_id" value="<?= htmlspecialchars($student['id'], ENT_QUOTES, 'UTF-8') ?>">
-                                                                    <input type="hidden" name="language" value="<?= htmlspecialchars($slang, ENT_QUOTES, 'UTF-8') ?>">
-                                                                    <input type="hidden" name="task" value="<?= htmlspecialchars($task, ENT_QUOTES, 'UTF-8') ?>">
-                                                                    <span class="text-white font-mono truncate max-w-[150px]"><?= htmlspecialchars($task, ENT_QUOTES, 'UTF-8') ?>:</span>
-                                                                    <div class="flex items-center gap-1.5 shrink-0">
-                                                                        <input type="number" name="percent" min="0" max="100" step="10" value="<?= $curr_val ?>" class="w-12 bg-[#161b22] border border-[#30363d] text-white text-center rounded px-1 py-0.5 font-mono focus:outline-none focus:border-github-success">
-                                                                        <span class="text-github-muted">%</span>
-                                                                        <button type="submit" class="bg-[#21262d] hover:bg-github-success hover:text-github-dark border border-[#30363d] hover:border-github-success px-2 py-0.5 rounded transition text-[10px]">更新</button>
-                                                                    </div>
-                                                                </form>
-                                                            <?php endforeach; ?>
-                                                        </div>
-                                                    </div>
-                                                <?php endforeach; ?>
-                                            </td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                <?php endif; ?>
-
-            </div>
-        <?php endif; ?>
-
-        <!-- ==========================================
-             3. カリキュラム構成 (先生専用)
-             ========================================== -->
-        <?php if ($tab === 'curriculum-editor' && $role === 'teacher'): ?>
-            <div class="space-y-6 max-w-4xl mx-auto">
-                <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-6">
-                    <div class="border-b border-[#30363d] pb-3 mb-6">
-                        <h2 class="text-lg font-bold text-white flex items-center gap-2">
-                            <i data-lucide="layout" class="w-5 h-5 text-[#58a6ff]"></i>
-                            <span>カリキュラム構成マスター管理 (先生専用)</span>
-                        </h2>
-                        <p class="text-xs text-[#8b949e] mt-1">生徒たちが選択可能なプログラミング言語と、カリキュラムタスクを構成設計します。新規タスク追加時は受講中の生徒全員に通知されます。</p>
-                    </div>
-
-                    <!-- 追加フォーム -->
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                        <div class="bg-[#0d1117] border border-[#30363d] p-4 rounded-lg">
-                            <h3 class="text-xs font-semibold text-white mb-3">① 言語の新規追加</h3>
-                            <form action="/20260630/?action=add_language" method="POST" class="space-y-3">
-                                <div>
-                                    <label class="block text-[11px] text-github-muted mb-1">言語名（例: PHP, React, Python）</label>
-                                    <input type="text" name="language" required placeholder="Python" class="w-full bg-[#161b22] border border-[#30363d] rounded px-3 py-1.5 text-white text-xs focus:outline-none focus:border-[#58a6ff]">
-                                </div>
-                                <button type="submit" class="w-full bg-github-success hover:bg-github-successBg text-white text-xs font-semibold py-1.5 rounded transition flex items-center justify-center gap-1">
-                                    <i data-lucide="plus" class="w-4 h-4"></i><span>言語を追加</span>
-                                </button>
-                            </form>
-                        </div>
-
-                        <div class="bg-[#0d1117] border border-[#30363d] p-4 rounded-lg">
-                            <h3 class="text-xs font-semibold text-white mb-3">② タスクの新規追加</h3>
-                            <form action="/20260630/?action=add_task" method="POST" class="space-y-3">
-                                <div>
-                                    <label class="block text-[11px] text-github-muted mb-1">対象言語</label>
-                                    <select name="language" required class="w-full bg-[#161b22] border border-[#30363d] rounded px-3 py-1.5 text-white text-xs focus:outline-none">
-                                        <?php foreach ($all_languages as $lang): ?>
-                                            <option value="<?= htmlspecialchars($lang, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($lang, ENT_QUOTES, 'UTF-8') ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label class="block text-[11px] text-github-muted mb-1">タスク名（例: 条件分岐とループ）</label>
-                                    <input type="text" name="task" required placeholder="オブジェクト指向" class="w-full bg-[#161b22] border border-[#30363d] rounded px-3 py-1.5 text-white text-xs focus:outline-none focus:border-[#58a6ff]">
-                                </div>
-                                <button type="submit" class="w-full bg-[#58a6ff] hover:bg-sky-600 text-[#0d1117] text-xs font-semibold py-1.5 rounded transition flex items-center justify-center gap-1">
-                                    <i data-lucide="plus" class="w-4 h-4"></i><span>タスクを追加</span>
-                                </button>
-                            </form>
-                        </div>
-                    </div>
-
-                    <!-- 現在のカリキュラムツリー一覧 -->
-                    <div>
-                        <h3 class="text-xs font-semibold text-white mb-3">カリキュラムマスター構成ツリー</h3>
-                        <div class="space-y-4 max-h-96 overflow-y-auto pr-2">
-                            <?php foreach ($all_languages as $lang): 
-                                $tasks = $this->curriculumModel->getTasksByLanguage($lang);
-                            ?>
-                                <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 space-y-2">
-                                    <div class="flex justify-between items-center border-b border-[#30363d] pb-2">
-                                        <span class="text-xs font-bold text-white flex items-center gap-1.5"><i data-lucide="package" class="w-4 h-4 text-[#58a6ff]"></i><span><?= htmlspecialchars($lang, ENT_QUOTES, 'UTF-8') ?></span></span>
-                                        <form action="/20260630/?action=delete_language" method="POST" onsubmit="return confirm('学習分野、紐づく生徒の進捗評価データを完全に一括削除しますか？');">
-                                            <input type="hidden" name="language" value="<?= htmlspecialchars($lang, ENT_QUOTES, 'UTF-8') ?>">
-                                            <button type="submit" class="bg-github-danger hover:bg-red-600 text-white text-[10px] px-2 py-0.5 rounded transition">言語一括削除</button>
-                                        </form>
-                                    </div>
-                                    <div class="space-y-1.5 pt-1">
-                                        <?php if (empty($tasks)): ?>
-                                            <p class="text-[10px] text-github-muted italic">タスクが定義されていません。</p>
-                                        <?php else: ?>
-                                            <?php foreach ($tasks as $idx => $task): ?>
-                                                <div class="flex items-center justify-between p-2 bg-[#161b22] border border-[#30363d] rounded text-xs font-mono">
-                                                    <span class="text-white"><?= $idx+1 ?>. <?= htmlspecialchars($task, ENT_QUOTES, 'UTF-8') ?></span>
-                                                    <form action="/20260630/?action=delete_task" method="POST" onsubmit="return confirm('このタスクを削除しますか？');">
-                                                        <input type="hidden" name="language" value="<?= htmlspecialchars($lang, ENT_QUOTES, 'UTF-8') ?>">
-                                                        <input type="hidden" name="task" value="<?= htmlspecialchars($task, ENT_QUOTES, 'UTF-8') ?>">
-                                                        <button type="submit" class="text-github-danger hover:text-red-400 font-bold text-[10px]">削除</button>
-                                                    </form>
-                                                </div>
-                                            <?php endforeach; ?>
-                                        <?php endif; ?>
-                                    </div>
-                                </div>
                             <?php endforeach; ?>
                         </div>
-                    </div>
-                </div>
+                    <?php endif; ?>
+                <?php endif; ?>
             </div>
-        <?php endif; ?>
-
+        </div>
     </div>
-</section>
 
 <!-- ==========================================
-     クライアント側 ダイアログ(JSモーダル制御)
+     タブ5: マスタデータ設定 (先生専用)
      ========================================== -->
-<script>
-    const modal = document.getElementById('common-modal');
-    const modalContent = document.getElementById('common-modal-content');
+<?php elseif ($current_tab === 'teacher_config' && $_SESSION['role'] === 'teacher'): ?>
+    
+    <div class="bg-white border border-[#d0d7de] rounded-lg p-5 shadow-sm">
+        <h3 class="font-bold text-base text-[#24292f] pb-3 border-b border-gray-100 flex items-center space-x-2 mb-4">
+            <i data-lucide="settings" class="w-5 h-5 text-gray-700"></i>
+            <span>指導用プログラミング言語・タスク（マスタ設定）</span>
+        </h3>
+        <p class="text-xs text-gray-500 mb-6 leading-relaxed">
+            生徒たちが学習選択や進捗投稿に利用する「指導用カリキュラム言語」と、その中に含まれる「詳細な学習タスク」を定義・編集します。<br>
+            <strong>新タスク追加：</strong>登録すると、該当言語を学習登録している全生徒へ自動通知が飛び、自動的に0%進捗レコードが生成されます。
+        </p>
 
-    function openAddFriendDialog() {
-        modal.classList.remove('hidden');
-        modalContent.innerHTML = `
-            <div class="flex items-center justify-between border-b border-[#30363d] pb-3 mb-4">
-                <h3 class="text-sm font-bold text-white flex items-center gap-1.5">
-                    <i data-lucide="user-plus" class="w-4 h-4 text-[#58a6ff]"></i><span>生徒を検索してつながりに追加</span>
-                </h3>
-                <button onclick="closeModal()" class="text-github-muted hover:text-white"><i data-lucide="x" class="w-4 h-4"></i></button>
+        <div class="grid grid-cols-2 gap-6">
+            <!-- 1. 新規プログラミング言語の登録 -->
+            <div class="border border-gray-200 rounded-lg p-4 bg-gray-50/50">
+                <h4 class="font-bold text-xs text-gray-700 mb-3 flex items-center space-x-1">
+                    <i data-lucide="plus-square" class="w-4 h-4"></i><span>新規プログラミング言語を追加</span>
+                </h4>
+                <form action="<?php echo BASE_URL; ?>master/add_curriculum" method="POST" class="space-y-3">
+                    <div>
+                        <label class="block text-xs text-gray-600 mb-1">プログラミング言語名</label>
+                        <input type="text" name="name" required placeholder="例: Ruby / Go / React"
+                               class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs bg-white focus:outline-none">
+                    </div>
+                    <button type="submit" class="w-full bg-[#2da44e] hover:bg-[#2c974b] text-white text-xs font-semibold py-2 rounded transition">
+                        言語マスタとして追加する
+                    </button>
+                </form>
             </div>
-            <form action="/20260630/?action=add_friend" method="POST" class="space-y-4 text-xs">
-                <div>
-                    <label class="block text-[#8b949e] mb-1 font-semibold">追加する生徒のユーザーIDを入力してください</label>
-                    <input type="text" name="target_id" required placeholder="student_bob など" class="w-full bg-[#0d1117] border border-[#30363d] rounded p-2 text-white focus:outline-none focus:border-[#58a6ff] font-mono">
-                </div>
-                <div class="flex justify-end gap-2 pt-2">
-                    <button type="button" onclick="closeModal()" class="bg-[#21262d] border border-[#30363d] text-white px-4 py-2 rounded">キャンセル</button>
-                    <button type="submit" class="bg-[#2ea44f] hover:bg-[#238636] text-white px-4 py-2 rounded font-semibold">友達追加する</button>
-                </div>
-            </form>
-        `;
-        lucide.createIcons();
-    }
 
-    function openEditTagDialog(targetId, currentTag) {
-        modal.classList.remove('hidden');
-        modalContent.innerHTML = `
-            <div class="flex items-center justify-between border-b border-[#30363d] pb-3 mb-4">
-                <h3 class="text-sm font-bold text-white flex items-center gap-1.5">
-                    <i data-lucide="tag" class="w-4 h-4 text-[#bc8cff]"></i><span>属性タグの設定</span>
-                </h3>
-                <button onclick="closeModal()" class="text-github-muted hover:text-white"><i data-lucide="x" class="w-4 h-4"></i></button>
+            <!-- 2. 詳細タスクの割り当て -->
+            <div class="border border-gray-200 rounded-lg p-4 bg-gray-50/50">
+                <h4 class="font-bold text-xs text-gray-700 mb-3 flex items-center space-x-1">
+                    <i data-lucide="list-plus" class="w-4 h-4"></i><span>カリキュラム学習タスクを割り当て</span>
+                </h4>
+                <form action="<?php echo BASE_URL; ?>master/add_task" method="POST" class="space-y-3">
+                    <div>
+                        <label class="block text-xs text-gray-600 mb-1">対象の親言語</label>
+                        <select name="curriculum_id" required class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs bg-white focus:outline-none">
+                            <option value="">言語を選択してください...</option>
+                            <?php foreach ($curriculumsWithTasks as $c): ?>
+                                <option value="<?php echo $c['id']; ?>"><?php echo htmlspecialchars($c['name']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-600 mb-1">詳細カリキュラムタスク名</label>
+                        <input type="text" name="task_name" required placeholder="例: データベースCRUD処理"
+                               class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs bg-white focus:outline-none">
+                    </div>
+                    <button type="submit" class="w-full bg-[#24292f] hover:bg-[#1f2328] text-white text-xs font-semibold py-2 rounded transition">
+                        新規課題タスクとして追加
+                    </button>
+                </form>
             </div>
-            <form action="/20260630/?action=change_tag" method="POST" class="space-y-4 text-xs">
-                <input type="hidden" name="target_id" value="${targetId}">
-                <div>
-                    <p class="text-github-muted mb-2 text-[11px]">「${targetId}」さんに対して独自の属性を設定できます (例: 友達, グループA, 1班など)。投稿時にこの属性をキーに公開範囲を限定できます。</p>
-                    <label class="block text-[#8b949e] mb-1 font-semibold">属性タグ名</label>
-                    <input type="text" name="tag" value="${currentTag}" required placeholder="友達" class="w-full bg-[#0d1117] border border-[#30363d] rounded p-2 text-white focus:outline-none focus:border-[#58a6ff]">
-                </div>
-                <div class="flex justify-end gap-2 pt-2">
-                    <button type="button" onclick="closeModal()" class="bg-[#21262d] border border-[#30363d] text-white px-4 py-2 rounded">キャンセル</button>
-                    <button type="submit" class="bg-github-success hover:bg-github-successBg text-white px-4 py-2 rounded font-semibold">タグ変更を保存</button>
-                </div>
-            </form>
-        `;
-        lucide.createIcons();
-    }
 
-    function openSelectLanguageDialog() {
-        modal.classList.remove('hidden');
-        modalContent.innerHTML = `
-            <div class="flex items-center justify-between border-b border-[#30363d] pb-3 mb-4">
-                <h3 class="text-sm font-bold text-white flex items-center gap-1.5">
-                    <i data-lucide="book-open" class="w-4 h-4 text-[#58a6ff]"></i><span>受講言語プロフィールの変更</span>
-                </h3>
-                <button onclick="closeModal()" class="text-github-muted hover:text-white"><i data-lucide="x" class="w-4 h-4"></i></button>
-            </div>
-            <form action="/20260630/?action=update_student_languages" method="POST" class="space-y-4 text-xs">
-                <p class="text-github-muted text-[11px]">あなたが学習するプログラミング言語を選択してください。選択した言語のタスクが自動登録されます。</p>
-                <div class="space-y-2 max-h-48 overflow-y-auto pr-1">
-                    <?php foreach ($all_languages as $alang): 
-                        $is_checked = in_array($alang, $study_languages) ? 'checked' : '';
-                    ?>
-                        <label class="flex items-center justify-between p-2.5 bg-[#0d1117] hover:bg-[#161b22] border border-[#30363d] rounded cursor-pointer transition">
-                            <span class="text-xs text-white font-bold"><?= htmlspecialchars($alang, ENT_QUOTES, 'UTF-8') ?></span>
-                            <input type="checkbox" name="languages[]" value="<?= htmlspecialchars($alang, ENT_QUOTES, 'UTF-8') ?>" <?= $is_checked ?> class="text-github-accent focus:ring-github-accent bg-[#161b22] border-[#30363d] rounded">
-                        </label>
+            <!-- マスタデータ構造ツリーのプレビュー表示 -->
+            <div class="col-span-2 border border-gray-200 rounded-lg p-4 bg-white">
+                <h4 class="font-bold text-xs text-gray-700 mb-3">現在のマスターデータ構成ツリー</h4>
+                <div class="grid grid-cols-2 gap-4">
+                    <?php foreach ($curriculumsWithTasks as $c): ?>
+                        <div class="border border-gray-150 rounded p-3 text-xs">
+                            <p class="font-bold text-sm text-[#24292f] border-b border-gray-100 pb-1.5 flex items-center justify-between">
+                                <span>🚀 <?php echo htmlspecialchars($c['name']); ?></span>
+                                <span class="text-[10px] text-gray-400">タスク数: <?php echo count($c['tasks']); ?></span>
+                            </p>
+                            <ul class="mt-2 space-y-1.5 text-gray-600 pl-2">
+                                <?php if (empty($c['tasks'])): ?>
+                                    <li class="text-gray-400 text-[11px] italic">タスクはまだ登録されていません</li>
+                                <?php else: ?>
+                                    <?php foreach ($c['tasks'] as $t): ?>
+                                        <li class="flex items-center space-x-1">
+                                            <span class="text-gray-400">├</span>
+                                            <span><?php echo htmlspecialchars($t['task_name']); ?></span>
+                                        </li>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </ul>
+                        </div>
                     <?php endforeach; ?>
                 </div>
-                <div class="flex justify-end gap-2 pt-2">
-                    <button type="button" onclick="closeModal()" class="bg-[#21262d] border border-[#30363d] text-white px-4 py-2 rounded">キャンセル</button>
-                    <button type="submit" class="bg-[#2ea44f] hover:bg-[#238636] text-white px-4 py-2 rounded font-semibold">学習登録を決定</button>
-                </div>
-            </form>
-        `;
-        lucide.createIcons();
-    }
-
-    function openEditPostDialog(postId, rawBody, rawCode, url) {
-        // 文字列のエスケープ・補正
-        const body = JSON.parse(rawBody);
-        const code = JSON.parse(rawCode);
-
-        modal.classList.remove('hidden');
-        modalContent.innerHTML = `
-            <div class="flex items-center justify-between border-b border-[#30363d] pb-3 mb-4">
-                <h3 class="text-sm font-bold text-white flex items-center gap-1.5">
-                    <i data-lucide="edit" class="w-4 h-4 text-[#58a6ff]"></i><span>学習投稿の編集</span>
-                </h3>
-                <button onclick="closeModal()" class="text-github-muted hover:text-white"><i data-lucide="x" class="w-4 h-4"></i></button>
             </div>
-            <form action="/20260630/?action=update_post" method="POST" class="space-y-4 text-xs">
-                <input type="hidden" name="post_id" value="${postId}">
-                <div>
-                    <label class="block text-[#8b949e] mb-1 font-semibold">進捗・質問本文</label>
-                    <textarea name="body" required rows="4" class="w-full bg-[#0d1117] border border-[#30363d] rounded p-2 text-white focus:outline-none focus:border-[#58a6ff]">${body}</textarea>
-                </div>
-                <div>
-                    <label class="block text-[#8b949e] mb-1 font-semibold font-mono">プログラムコード</label>
-                    <textarea name="code" rows="6" class="w-full bg-[#0d1117] border border-[#30363d] rounded p-2 text-white font-mono focus:outline-none focus:border-[#58a6ff]">${code || ''}</textarea>
-                </div>
-                <div>
-                    <label class="block text-[#8b949e] mb-1 font-semibold">参考URL</label>
-                    <input type="url" name="url" value="${url || ''}" class="w-full bg-[#0d1117] border border-[#30363d] rounded p-2 text-white focus:outline-none focus:border-[#58a6ff]">
-                </div>
-                <div class="flex justify-end gap-2 pt-2">
-                    <button type="button" onclick="closeModal()" class="bg-[#21262d] border border-[#30363d] text-white px-4 py-2 rounded">キャンセル</button>
-                    <button type="submit" class="bg-github-success hover:bg-github-successBg text-white px-4 py-2 rounded font-semibold">変更を保存</button>
-                </div>
-            </form>
-        `;
-        lucide.createIcons();
-    }
+        </div>
+    </div>
 
-    function closeModal() {
-        modal.classList.add('hidden');
-    }
+<?php endif; ?>
 
-    // 投稿時のタスクドロップダウンの動的書き換え（JavaScript連携）
-    const curriculums = {
-        <?php foreach ($all_languages as $lang): 
-            $tasks = $this->curriculumModel->getTasksByLanguage($lang);
-        ?>
-            "<?= htmlspecialchars($lang, ENT_QUOTES, 'UTF-8') ?>": <?= json_encode($tasks) ?>,
-        <?php endforeach; ?>
-    };
+<!-- ==========================================
+     投稿編集用 モーダルダイアログ
+     ========================================== -->
+<div id="edit-post-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden">
+    <div class="bg-white border border-gray-300 rounded-lg max-w-lg w-full p-6 shadow-xl relative animate-in fade-in zoom-in-95 duration-150">
+        <h4 class="font-bold text-base text-gray-800 mb-4 flex items-center space-x-2">
+            <i data-lucide="edit" class="w-5 h-5 text-gray-600"></i>
+            <span>進捗投稿の編集 (投稿後1時間制限)</span>
+        </h4>
 
-    function updatePostTaskDropdown(lang) {
-        const selectTask = document.getElementById('post-task');
-        selectTask.innerHTML = '';
+        <form action="<?php echo BASE_URL; ?>post/edit" method="POST" class="space-y-4">
+            <input type="hidden" name="post_id" id="edit-post-id">
+            
+            <div>
+                <label class="block text-xs font-semibold text-gray-600 mb-1">本文・内容</label>
+                <textarea name="content" id="edit-post-content" required rows="4" 
+                          class="w-full border border-gray-300 rounded p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"></textarea>
+            </div>
 
-        if (!lang || !curriculums[lang]) {
-            selectTask.innerHTML = '<option value="">-- 先に言語を選択してください --</option>';
-            return;
-        }
+            <div>
+                <label class="block text-xs font-semibold text-gray-600 mb-1">ソースコード</label>
+                <textarea name="code_content" id="edit-post-code" rows="5" 
+                          class="w-full border border-gray-300 rounded p-2 text-xs code-font bg-gray-50 focus:bg-white focus:outline-none"></textarea>
+            </div>
 
-        const tasks = curriculums[lang];
-        if (tasks.length === 0) {
-            selectTask.innerHTML = '<option value="">-- タスクが未定義です --</option>';
-            return;
-        }
+            <div>
+                <label class="block text-xs font-semibold text-gray-600 mb-1">参考URL</label>
+                <input type="url" name="reference_url" id="edit-post-url"
+                       class="w-full border border-gray-300 rounded p-2 text-xs focus:outline-none">
+            </div>
 
-        tasks.forEach(task => {
-            const opt = document.createElement('option');
-            opt.value = task;
-            opt.textContent = task;
-            selectTask.appendChild(opt);
-        });
-    }
+            <div class="flex justify-end space-x-2 pt-2">
+                <button type="button" onclick="closeEditPostModal()" class="bg-gray-150 hover:bg-gray-200 text-gray-700 text-xs font-semibold px-4 py-2 rounded transition">
+                    キャンセル
+                </button>
+                <button type="submit" class="bg-[#2da44e] hover:bg-[#2c974b] text-white text-xs font-semibold px-4 py-2 rounded transition">
+                    変更を保存する
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
 
-    function toggleFormTagSelector(show) {
-        const container = document.getElementById('visibility-tag-selector-container');
-        if (show) {
-            container.classList.remove('hidden');
-        } else {
-            container.classList.add('hidden');
-        }
-    }
 
-    function copyInviteURL(text) {
-        const el = document.createElement('textarea');
-        el.value = text;
-        document.body.appendChild(el);
-        el.select();
+<!-- フッターを含むレイアウトの終了部分 -->
+</main>
+</div>
+
+<!-- クライアントサイド動的制御用 JavaScript -->
+<script>
+    // Lucideアイコンの即時レンダリング
+    lucide.createIcons();
+
+    // 友達招待URLをクリップボードにコピー
+    function copyInviteURL() {
+        const input = document.getElementById('invite-url-input');
+        input.select();
         document.execCommand('copy');
-        document.body.removeChild(el);
 
-        const banner = document.getElementById('invite-copied-modal');
-        banner.classList.remove('hidden');
-        setTimeout(() => banner.classList.add('hidden'), 3000);
-    }
+        const msg = document.getElementById('copy-message');
+        msg.classList.remove('hidden');
 
-    function copyCode(btn) {
-        const pre = btn.closest('.border').querySelector('pre code');
-        const el = document.createElement('textarea');
-        el.value = pre.textContent;
-        document.body.appendChild(el);
-        el.select();
-        document.execCommand('copy');
-        document.body.removeChild(el);
-        
-        btn.innerHTML = '<i data-lucide="check" class="w-3 h-3"></i>コピーしました！';
+        // コピーアイコンをチェックマークに変更
+        const icon = document.getElementById('copy-icon');
+        icon.setAttribute('data-lucide', 'check');
         lucide.createIcons();
+
         setTimeout(() => {
-            btn.innerHTML = '<i data-lucide="copy" class="w-3 h-3"></i>コピー';
+            msg.classList.add('hidden');
+            icon.setAttribute('data-lucide', 'copy');
             lucide.createIcons();
+        }, 3000);
+    }
+
+    // 投稿コードクリップボードコピー
+    function copyCode(button) {
+        const pre = button.parentElement.nextElementSibling.querySelector('pre');
+        const range = document.createRange();
+        range.selectNode(pre);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+        document.execCommand('copy');
+        window.getSelection().removeAllRanges();
+
+        const label = button.querySelector('span');
+        label.innerText = 'Copied!';
+        setTimeout(() => {
+            label.innerText = 'Copy';
         }, 2000);
     }
-</script>
 
-<script>
-    lucide.createIcons();
+    // 生徒用：選択された言語に基づいて、投稿可能な詳細タスク一覧を動的に更新（二重セレクト連動）
+    const myCurriculums = <?php echo json_encode($studentCurriculums ?? []); ?>;
+    
+    function updatePostTasks() {
+        const currSelect = document.getElementById('post-curriculum-select');
+        const taskSelect = document.getElementById('post-task-select');
+        const selectedId = parseInt(currSelect.value);
+
+        taskSelect.innerHTML = '';
+
+        if (!selectedId) {
+            taskSelect.innerHTML = '<option value="">まず言語を選択してください</option>';
+            taskSelect.disabled = true;
+            return;
+        }
+
+        const match = myCurriculums.find(c => c.id === selectedId);
+        if (match && match.tasks && match.tasks.length > 0) {
+            match.tasks.forEach(task => {
+                const opt = document.createElement('option');
+                opt.value = task.task_id;
+                opt.textContent = `${task.task_name} (現在習熟度: ${task.proficiency}%)`;
+                taskSelect.appendChild(opt);
+            });
+            taskSelect.disabled = false;
+        } else {
+            taskSelect.innerHTML = '<option value="">タスクが登録されていません</option>';
+            taskSelect.disabled = true;
+        }
+    }
+
+    // 投稿編集用モーダルの表示制御
+    function openEditPostModal(post) {
+        document.getElementById('edit-post-id').value = post.id;
+        document.getElementById('edit-post-content').value = post.content;
+        document.getElementById('edit-post-code').value = post.code_content || '';
+        document.getElementById('edit-post-url').value = post.reference_url || '';
+        document.getElementById('edit-post-modal').classList.remove('hidden');
+    }
+
+    function closeEditPostModal() {
+        document.getElementById('edit-post-modal').classList.add('hidden');
+    }
 </script>
 </body>
 </html>

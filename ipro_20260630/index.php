@@ -1,138 +1,92 @@
 <?php
-// セッション管理開始
+/**
+ * =======================================================
+ * ユーザ管理機能付き掲示板（学習進捗管理システム）
+ * フロントコントローラー & カスタムルーター (index.php)
+ * =======================================================
+ */
+
+// セッションの開始
 session_start();
 
-// 1. 共通データベース接続
-require_once 'config/database.php';
-$db = Database::getConnection();
+// 技術要件: XAMPP環境（PHP/MySQL想定）に基づくポートおよびルートパス設定
+define('BASE_PORT', '8080');
+define('BASE_PATH', '/ipro_20260630/');
+define('BASE_URL', 'http://localhost:' . BASE_PORT . BASE_PATH);
 
-// 2. 共通コントローラー読み込み
-require_once 'controllers/UserController.php';
-require_once 'controllers/BoardController.php';
+// セキュリティレスポンスヘッダーの設定（X-XSS-Protection、X-Frame-Options、X-Content-Type-Optionsなど）
+header('X-XSS-Protection: 1; mode=block');
+header('X-Frame-Options: SAMEORIGIN');
+header('X-Content-Type-Options: nosniff');
 
-$userController = new UserController($db);
-$boardController = new BoardController($db);
+// リクエストURIのパース処理（クエリ文字列の切り離し）
+$request_uri = $_SERVER['REQUEST_URI'];
+$base_path_escaped = preg_quote(BASE_PATH, '/');
+// URLパスを正規化
+$path = preg_replace('/^' . $base_path_escaped . '/', '', $request_uri);
+$path = parse_url($path, PHP_URL_PATH);
+$path = rtrim($path, '/');
 
-// 3. ルーティングパラメータの解析
-$action = $_GET['action'] ?? 'dashboard';
+// インポートコントローラー群
+require_once __DIR__ . '/controllers/UserController.php';
+require_once __DIR__ . '/controllers/BoardController.php';
 
-// --- セッションに招待用クエリパラメータの保持
-if (isset($_GET['invite_from'])) {
-    $_SESSION['invite_from'] = $_GET['invite_from'];
-}
+$userController = new UserController();
+$boardController = new BoardController();
 
-// 4. ゲスト（非ログイン状態）閲覧制限ガード
-$auth_actions = ['login_form', 'login', 'register_form', 'register'];
-if (!isset($_SESSION['user_id']) && !in_array($action, $auth_actions)) {
-    // 招待URLを踏んでログインもしていない状態なら登録画面に優先的に誘導
-    if (isset($_SESSION['invite_from'])) {
-        header('Location: /20260630/?action=register_form');
+// -------------------------------------------------------
+// 高機能URLルーティングのシミュレーション
+// -------------------------------------------------------
+
+if ($path === '' || $path === 'login') {
+    // ログイン処理
+    $userController->login();
+} elseif ($path === 'register') {
+    // 自己登録
+    $userController->register();
+} elseif ($path === 'logout') {
+    // ログアウト
+    $userController->logout();
+} elseif ($path === 'dashboard') {
+    // メインダッシュボード画面
+    $boardController->dashboard();
+} elseif ($path === 'post/create') {
+    // 投稿作成
+    $boardController->createPost();
+} elseif ($path === 'post/edit') {
+    // 投稿編集
+    $boardController->editPost();
+} elseif ($path === 'post/delete') {
+    // 投稿削除
+    $boardController->deletePost();
+} elseif ($path === 'reply') {
+    // 指導リプライ処理 (作成/編集/削除)
+    $boardController->handleReply();
+} elseif ($path === 'curriculum/select') {
+    // 生徒が学習カリキュラムをプロフィールに追加登録
+    $boardController->selectCurriculum();
+} elseif ($path === 'friends/manage') {
+    // 友達検索・登録・属性タグの変更/削除
+    $userController->manageFriends();
+} elseif (preg_match('/^invite\/([a-f0-9]+)$/', $path, $matches)) {
+    // 専用招待URL（トークン付き）アクセス時
+    $token = $matches[1];
+    $userController->handleInvite($token);
+} elseif ($path === 'master/add_curriculum') {
+    // 先生：言語マスタ追加
+    $boardController->masterAddCurriculum();
+} elseif ($path === 'master/add_task') {
+    // 先生：詳細タスク追加
+    $boardController->masterAddTask();
+} elseif ($path === 'curriculum/update_proficiency') {
+    // 先生：生徒のタスク習熟度評価(%)を更新
+    $boardController->updateStudentProficiency();
+} else {
+    // URL不整合時、ログイン状態に合わせてリダイレクト
+    if (isset($_SESSION['user_id'])) {
+        header("Location: " . BASE_URL . "dashboard");
     } else {
-        header('Location: /20260630/?action=login_form');
+        header("Location: " . BASE_URL . "login");
     }
     exit;
-}
-
-// 5. アクションハンドリング・ルーティング分岐
-switch ($action) {
-    // --- 認証機能 ---
-    case 'login_form':
-        include 'views/user/login.php';
-        break;
-        
-    case 'login':
-        $userController->login();
-        break;
-        
-    case 'register_form':
-        include 'views/user/register.php';
-        break;
-        
-    case 'register':
-        $userController->register();
-        break;
-        
-    case 'logout':
-        $userController->logout();
-        break;
-
-    // --- つながり（友達・属性）機能 ---
-    case 'add_friend':
-        $userController->addFriend();
-        break;
-
-    case 'change_tag':
-        $userController->changeFriendTag();
-        break;
-
-    case 'remove_friend':
-        $userController->removeFriend();
-        break;
-
-    // --- カリキュラム・掲示板・通知機能 ---
-    case 'create_post':
-        $boardController->createPost();
-        break;
-
-    case 'update_post':
-        $boardController->updatePost();
-        break;
-
-    case 'delete_post':
-        $boardController->deletePost();
-        break;
-
-    case 'create_reply':
-        $boardController->createReply();
-        break;
-
-    case 'delete_reply':
-        $boardController->deleteReply();
-        break;
-
-    case 'add_language':
-        $boardController->addLanguage();
-        break;
-
-    case 'add_task':
-        $boardController->addTask();
-        break;
-
-    case 'delete_language':
-        if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_SESSION['role'] === 'teacher') {
-            $language = $_POST['language'] ?? '';
-            $boardController->curriculumModel->deleteLanguage($language);
-            $_SESSION['success'] = "学習言語「{$language}」と関連タスク、生徒進捗評価を全て削除しました。";
-        }
-        header('Location: /20260630/?tab=curriculum-editor');
-        break;
-
-    case 'delete_task':
-        if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_SESSION['role'] === 'teacher') {
-            $language = $_POST['language'] ?? '';
-            $task = $_POST['task'] ?? '';
-            $boardController->curriculumModel->deleteTask($language, $task);
-            $_SESSION['success'] = "タスク「{$task}」を削除しました。";
-        }
-        header('Location: /20260630/?tab=curriculum-editor');
-        break;
-
-    case 'update_progress':
-        $boardController->updateProgress();
-        break;
-
-    case 'update_student_languages':
-        $boardController->updateStudentLanguages();
-        break;
-
-    case 'clear_notifications':
-        $boardController->clearNotifications();
-        break;
-
-    // --- ダッシュボード（メインポータル） ---
-    case 'dashboard':
-    default:
-        // header.php 内で自動ローディング
-        include 'views/dashboard.php';
-        break;
 }

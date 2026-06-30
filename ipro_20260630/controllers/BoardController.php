@@ -1,316 +1,342 @@
 <?php
-class BoardController {
-    private $postModel;
-    private $curriculumModel;
-    private $userModel;
+require_once __DIR__ . '/../models/User.php';
+require_once __DIR__ . '/../models/Curriculum.php';
+require_once __DIR__ . '/../models/Post.php';
 
-    public function __construct($db) {
-        require_once 'models/Post.php';
-        require_once 'models/Curriculum.php';
-        require_once 'models/User.php';
-        
-        $this->postModel = new Post($db);
-        $this->curriculumModel = new Curriculum($db);
-        $this->userModel = new User($db);
+class BoardController {
+    private $userModel;
+    private $curriculumModel;
+    private $postModel;
+
+    public function __construct() {
+        $this->userModel = new User();
+        $this->curriculumModel = new Curriculum();
+        $this->postModel = new Post();
     }
 
-    // 進捗・質問の新規投稿 (ファイルアップロード処理込み)
-    public function createPost() {
-        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $author_id = $_SESSION['user_id'];
-            $language = $_POST['language'] ?? '';
-            $task = $_POST['task'] ?? '';
-            $body = trim($_POST['body'] ?? '');
-            $code = $_POST['code'] ?? null;
-            $url = trim($_POST['url'] ?? null);
-            $visibility = $_POST['visibility'] ?? 'all';
-            $target_tag = $_POST['target_tag'] ?? null;
+    /**
+     * メインダッシュボード画面
+     */
+    public function dashboard() {
+        $this->checkAuth();
+        
+        $user_id = $_SESSION['user_id'];
+        $role = $_SESSION['role'];
 
-            if (empty($language) || empty($task) || empty($body)) {
-                $_SESSION['error'] = '対象言語・タスク・本文は入力必須項目です。';
-                header('Location: /20260630/');
-                exit;
+        // 各モデルから必要データをロード
+        $userInfo = $this->userModel->findById($user_id);
+        $curriculumsWithTasks = $this->curriculumModel->getAllCurriculumsWithTasks();
+        $studentCurriculums = $this->curriculumModel->getStudentCurriculums($user_id);
+        $feed = $this->postModel->getFeed($user_id, $role);
+        $friends = $this->userModel->getFriendsWithAttributes($user_id);
+        $distinctTags = $this->userModel->getDistinctAttributeTags($user_id);
+        $unreadNotifications = $this->postModel->getUnreadNotifications($user_id);
+
+        // 先生用の生徒全体進捗確認用データ
+        $allStudents = [];
+        if ($role === 'teacher') {
+            $allStudents = $this->userModel->getAllStudents();
+            foreach ($allStudents as &$student) {
+                $student['curriculums'] = $this->curriculumModel->getStudentCurriculums($student['id']);
             }
+        }
 
-            // ファイルアップロード処理 (5MB制限、拡張子制限)
-            $file_name = null;
-            $file_path = null;
+        // GitHub風草データの取得 (生徒自身、または先生が見る対象)
+        $selected_student_id = $user_id;
+        if ($role === 'teacher' && isset($_GET['view_student_id'])) {
+            $selected_student_id = intval($_GET['view_student_id']);
+        }
+        $grassCalendar = $this->curriculumModel->getContributionGrassData($selected_student_id);
+        $viewingStudentName = ($selected_student_id === $user_id) ? "あなた" : ($this->userModel->findById($selected_student_id)['display_name'] ?? '生徒');
 
-            if (isset($_FILES['attached_file']) && $_FILES['attached_file']['error'] === UPLOAD_ERR_OK) {
-                $file = $_FILES['attached_file'];
-                $max_size = 5 * 1024 * 1024; // 5MB
+        // ポスト一覧に各投稿の編集削除判定フラグと、紐づくリプライ一覧を結合
+        foreach ($feed as &$post) {
+            $post['can_edit_delete'] = $this->postModel->canEditOrDelete($post['created_at'], $post['user_id'], $user_id, $role);
+            $post['replies'] = $this->postModel->getRepliesForPost($post['id']);
+            foreach ($post['replies'] as &$rep) {
+                // リプライの編集削除判定
+                $rep['can_edit_delete'] = ($role === 'teacher' || $rep['user_id'] == $user_id);
+            }
+        }
 
-                if ($file['size'] > $max_size) {
-                    $_SESSION['error'] = '添付可能なファイルは最大5MBまでです。';
-                    header('Location: /20260630/');
-                    exit;
-                }
+        // 検索パラメータ
+        $searchQuery = trim($_GET['search_query'] ?? '');
+        $searchResults = [];
+        if (!empty($searchQuery)) {
+            $searchResults = $this->userModel->searchStudents($searchQuery, $user_id);
+        }
 
-                // 拡張子判定
-                $allowed_extensions = ['jpg', 'jpeg', 'png', 'gif', 'txt', 'pdf'];
-                $file_ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        // 通知全既読化処理 (ダッシュボード表示時)
+        if (!empty($unreadNotifications)) {
+            $this->postModel->markAllAsRead($user_id);
+        }
 
-                if (!in_array($file_ext, $allowed_extensions)) {
-                    $_SESSION['error'] = '許可されていない拡張子です（JPG, PNG, GIF, TXT, PDFのみ添付可能）。';
-                    header('Location: /20260630/');
-                    exit;
-                }
+        include __DIR__ . '/../views/dashboard.php';
+    }
 
-                // アップロード用ディレクトリ作成
-                $upload_dir = 'uploads/';
-                if (!file_exists($upload_dir)) {
+    /**
+     * 新規進捗投稿
+     */
+    public function createPost() {
+        $this->checkAuth();
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            header("Location: " . BASE_URL . "dashboard");
+            exit;
+        }
+
+        $user_id = $_SESSION['user_id'];
+        $curriculum_id = intval($_POST['curriculum_id'] ?? 0);
+        $task_id = intval($_POST['task_id'] ?? 0);
+        $content = trim($_POST['content'] ?? '');
+        $code_content = trim($_POST['code_content'] ?? '');
+        $reference_url = trim($_POST['reference_url'] ?? '');
+        $visibility_type = $_POST['visibility_type'] ?? 'public'; // public or attribute_tag
+
+        $allowed_friend_ids = [];
+        if ($visibility_type !== 'public' && !empty($visibility_type)) {
+            // 指定された属性タグの友達のみを取得
+            $allowed_friend_ids = $this->userModel->getFriendIdsByAttribute($user_id, $visibility_type);
+        }
+
+        // ファイルアップロード処理 (5MB制限)
+        $file_path = null;
+        $file_name = null;
+
+        if (isset($_FILES['attached_file']) && $_FILES['attached_file']['error'] === UPLOAD_ERR_OK) {
+            $file = $_FILES['attached_file'];
+            $max_size = 5 * 1024 * 1024; // 5MB
+            $allowed_extensions = ['jpg', 'jpeg', 'png', 'gif', 'txt', 'pdf'];
+            
+            $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+
+            if ($file['size'] > $max_size) {
+                $_SESSION['post_error'] = "ファイルサイズは5MB以下にしてください。";
+                header("Location: " . BASE_URL . "dashboard");
+                exit;
+            } elseif (!in_array($ext, $allowed_extensions)) {
+                $_SESSION['post_error'] = "許可されていないファイル形式です。(.jpg, .jpeg, .png, .gif, .txt, .pdf のみ)";
+                header("Location: " . BASE_URL . "dashboard");
+                exit;
+            } else {
+                // XAMPP環境で保存用の「uploads」ディレクトリを作成
+                $upload_dir = __DIR__ . '/../public/uploads/';
+                if (!is_dir($upload_dir)) {
                     mkdir($upload_dir, 0777, true);
                 }
-
-                $new_file_name = uniqid('file_', true) . '.' . $file_ext;
-                $target_path = $upload_dir . $new_file_name;
-
+                
+                $unique_name = uniqid() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+                $target_path = $upload_dir . $unique_name;
+                
                 if (move_uploaded_file($file['tmp_name'], $target_path)) {
+                    $file_path = 'public/uploads/' . $unique_name;
                     $file_name = $file['name'];
-                    $file_path = $target_path;
                 }
             }
+        }
 
-            // 投稿保存
-            $result = $this->postModel->create(
-                $author_id, $language, $task, $body, $code, $file_name, $file_path, $url, $visibility, $target_tag
-            );
+        if ($curriculum_id > 0 && $task_id > 0 && !empty($content)) {
+            $this->postModel->createPost($user_id, $curriculum_id, $task_id, $content, $code_content, $file_path, $file_name, $reference_url, $allowed_friend_ids);
+        }
 
-            if ($result) {
-                // 先生(管理者)への通知（生徒が新規投稿した際）
-                if ($_SESSION['role'] === 'student') {
-                    $user_name = $_SESSION['user_name'];
-                    $this->postModel->addNotification(
-                        'teacher_admin', 
-                        "生徒「{$user_name}」が新しい進捗投稿 \"{$language} > {$task}\" を行いました。", 
-                        'new_post'
-                    );
+        header("Location: " . BASE_URL . "dashboard");
+        exit;
+    }
+
+    /**
+     * 投稿の編集
+     */
+    public function editPost() {
+        $this->checkAuth();
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') exit;
+
+        $post_id = intval($_POST['post_id'] ?? 0);
+        $content = trim($_POST['content'] ?? '');
+        $code_content = trim($_POST['code_content'] ?? '');
+        $reference_url = trim($_POST['reference_url'] ?? '');
+
+        $post = $this->postModel->getPost($post_id);
+        if ($post && $this->postModel->canEditOrDelete($post['created_at'], $post['user_id'], $_SESSION['user_id'], $_SESSION['role'])) {
+            $this->postModel->updatePost($post_id, $content, $code_content, $reference_url);
+        }
+        header("Location: " . BASE_URL . "dashboard");
+        exit;
+    }
+
+    /**
+     * 投稿の削除
+     */
+    public function deletePost() {
+        $this->checkAuth();
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') exit;
+
+        $post_id = intval($_POST['post_id'] ?? 0);
+        $post = $this->postModel->getPost($post_id);
+        if ($post && $this->postModel->canEditOrDelete($post['created_at'], $post['user_id'], $_SESSION['user_id'], $_SESSION['role'])) {
+            // ファイルの物理削除
+            if (!empty($post['file_path'])) {
+                $physical_path = __DIR__ . '/../' . $post['file_path'];
+                if (file_exists($physical_path)) {
+                    unlink($physical_path);
                 }
+            }
+            $this->postModel->deletePost($post_id);
+        }
+        header("Location: " . BASE_URL . "dashboard");
+        exit;
+    }
 
-                // 属性指定公開時の対象者へのシステム内通知
-                if ($visibility === 'restricted' && !empty($target_tag)) {
-                    $friends = $this->userModel->getFriends($author_id);
-                    foreach ($friends as $friend) {
-                        if ($friend['tag'] === $target_tag) {
-                            $user_name = $_SESSION['user_name'];
-                            $this->postModel->addNotification(
-                                $friend['id'],
-                                "「{$user_name}」さんからあなた限定（属性: {$target_tag}）の進捗投稿が届きました。",
-                                'private_post'
-                            );
-                        }
+    /**
+     * リプライ（先生指導）の作成・編集・削除
+     */
+    public function handleReply() {
+        $this->checkAuth();
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') exit;
+
+        $action = $_POST['action'] ?? '';
+        
+        if ($action === 'create') {
+            $post_id = intval($_POST['post_id'] ?? 0);
+            $content = trim($_POST['content'] ?? '');
+            if ($post_id > 0 && !empty($content)) {
+                $this->postModel->createReply($post_id, $_SESSION['user_id'], $content);
+            }
+        } elseif ($action === 'edit') {
+            $reply_id = intval($_POST['reply_id'] ?? 0);
+            $content = trim($_POST['content'] ?? '');
+            $reply = $this->postModel->getReply($reply_id);
+            if ($reply && ($_SESSION['role'] === 'teacher' || $reply['user_id'] == $_SESSION['user_id'])) {
+                $this->postModel->updateReply($reply_id, $content);
+            }
+        } elseif ($action === 'delete') {
+            $reply_id = intval($_POST['reply_id'] ?? 0);
+            $reply = $this->postModel->getReply($reply_id);
+            if ($reply && ($_SESSION['role'] === 'teacher' || $reply['user_id'] == $_SESSION['user_id'])) {
+                $this->postModel->deleteReply($reply_id);
+            }
+        }
+
+        header("Location: " . BASE_URL . "dashboard");
+        exit;
+    }
+
+    /**
+     * 生徒による学習カリキュラム選択追加
+     */
+    public function selectCurriculum() {
+        $this->checkAuth();
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $curriculum_id = intval($_POST['curriculum_id'] ?? 0);
+            if ($curriculum_id > 0 && $_SESSION['role'] === 'student') {
+                $this->curriculumModel->selectStudentCurriculum($_SESSION['user_id'], $curriculum_id);
+            }
+        }
+        header("Location: " . BASE_URL . "dashboard?tab=curriculum");
+        exit;
+    }
+
+    /**
+     * 言語マスタの追加（先生のみ。追加時に対象生徒へ通知）
+     */
+    public function masterAddCurriculum() {
+        $this->checkAuth();
+        if ($_SESSION['role'] !== 'teacher') exit;
+
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $name = trim($_POST['name'] ?? '');
+            if (!empty($name)) {
+                $this->curriculumModel->addCurriculum($name);
+            }
+        }
+        header("Location: " . BASE_URL . "dashboard?tab=teacher_config");
+        exit;
+    }
+
+    /**
+     * 言語タスクの追加（先生のみ。追加時、該当言語を学習登録している全生徒へ通知）
+     */
+    public function masterAddTask() {
+        $this->checkAuth();
+        if ($_SESSION['role'] !== 'teacher') exit;
+
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $curriculum_id = intval($_POST['curriculum_id'] ?? 0);
+            $task_name = trim($_POST['task_name'] ?? '');
+
+            if ($curriculum_id > 0 && !empty($task_name)) {
+                $task_id = $this->curriculumModel->addTask($curriculum_id, $task_name);
+                if ($task_id) {
+                    // 全生徒の進捗テーブル初期化
+                    $this->curriculumModel->initProgressForNewTask($curriculum_id, $task_id);
+
+                    // 登録している生徒全員に通知を送信
+                    $stmt_students = Database::getConnection()->prepare("SELECT student_id FROM student_curriculums WHERE curriculum_id = :curriculum_id");
+                    $stmt_students->execute([':curriculum_id' => $curriculum_id]);
+                    $students = $stmt_students->fetchAll(PDO::FETCH_COLUMN);
+
+                    $curr = $this->curriculumModel->getCurriculum($curriculum_id);
+
+                    foreach ($students as $student_id) {
+                        $this->postModel->createNotification(
+                            $student_id,
+                            $_SESSION['user_id'],
+                            'new_task',
+                            $curriculum_id,
+                            "あなたが学習中の言語「{$curr['name']}」に、新しいカリキュラムタスク『{$task_name}』が先生により追加されました！"
+                        );
                     }
                 }
-
-                $_SESSION['success'] = '学習進捗をタイムラインに投稿しました！';
-            } else {
-                $_SESSION['error'] = '投稿処理中にエラーが発生しました。';
             }
-
-            header('Location: /20260630/');
-            exit;
         }
-    }
-
-    // 投稿の編集 (作成後1時間制限、または先生権限)
-    public function updatePost() {
-        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $post_id = $_POST['post_id'] ?? '';
-            $body = trim($_POST['body'] ?? '');
-            $code = $_POST['code'] ?? null;
-            $url = trim($_POST['url'] ?? null);
-
-            $post = $this->postModel->getById($post_id);
-            if (!$post) {
-                $_SESSION['error'] = '投稿が見つかりませんでした。';
-                header('Location: /20260630/');
-                exit;
-            }
-
-            // 編集削除のライフサイクル保護
-            $is_author = $post['author_id'] === $_SESSION['user_id'];
-            $is_teacher = $_SESSION['role'] === 'teacher';
-            $elapsed_seconds = time() - strtotime($post['created_at']);
-            $is_within_one_hour = $elapsed_seconds <= 3600;
-
-            if ($is_teacher || ($is_author && $is_within_one_hour)) {
-                $this->postModel->update($post_id, $body, $code, $url);
-                $_SESSION['success'] = '投稿内容を更新しました。';
-            } else {
-                $_SESSION['error'] = '投稿後1時間を経過したため、編集できません。';
-            }
-
-            header('Location: /20260630/');
-            exit;
-        }
-    }
-
-    // 投稿の削除
-    public function deletePost() {
-        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $post_id = $_POST['post_id'] ?? '';
-            $post = $this->postModel->getById($post_id);
-
-            if (!$post) {
-                $_SESSION['error'] = '投稿が見つかりませんでした。';
-                header('Location: /20260630/');
-                exit;
-            }
-
-            $is_author = $post['author_id'] === $_SESSION['user_id'];
-            $is_teacher = $_SESSION['role'] === 'teacher';
-            $elapsed_seconds = time() - strtotime($post['created_at']);
-            $is_within_one_hour = $elapsed_seconds <= 3600;
-
-            if ($is_teacher || ($is_author && $is_within_one_hour)) {
-                $this->postModel->delete($post_id);
-                $_SESSION['success'] = '学習進捗の投稿を削除しました。';
-            } else {
-                $_SESSION['error'] = '削除する権限がないか、投稿後1時間を超過しています。';
-            }
-
-            header('Location: /20260630/');
-            exit;
-        }
-    }
-
-    // リプライ投稿 (指導・返信)
-    public function createReply() {
-        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $post_id = $_POST['post_id'] ?? '';
-            $author_id = $_SESSION['user_id'];
-            $body = trim($_POST['body'] ?? '');
-
-            if (empty($body)) {
-                $_SESSION['error'] = 'コメント内容を入力してください。';
-                header('Location: /20260630/');
-                exit;
-            }
-
-            $this->postModel->createReply($post_id, $author_id, $body);
-
-            // 通知処理（先生から生徒への指導リプライの場合）
-            $post = $this->postModel->getById($post_id);
-            if ($_SESSION['role'] === 'teacher' && $post && $post['author_id'] !== $author_id) {
-                $this->postModel->addNotification(
-                    $post['author_id'],
-                    "先生があなたの投稿 \"{$post['language']} > {$post['task']}\" にアドバイスを投稿しました。",
-                    'reply'
-                );
-            }
-
-            $_SESSION['success'] = 'リプライを投稿しました。';
-            header('Location: /20260630/');
-            exit;
-        }
-    }
-
-    // リプライの削除
-    public function deleteReply() {
-        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $reply_id = $_POST['reply_id'] ?? '';
-            $reply = $this->postModel->getReplyById($reply_id);
-
-            if (!$reply) {
-                $_SESSION['error'] = 'コメントが見つかりません。';
-                header('Location: /20260630/');
-                exit;
-            }
-
-            $is_author = $reply['author_id'] === $_SESSION['user_id'];
-            $is_teacher = $_SESSION['role'] === 'teacher';
-            $elapsed_seconds = time() - strtotime($reply['created_at']);
-            $is_within_one_hour = $elapsed_seconds <= 3600;
-
-            if ($is_teacher || ($is_author && $is_within_one_hour)) {
-                $this->postModel->deleteReply($reply_id);
-                $_SESSION['success'] = 'コメントを削除しました。';
-            } else {
-                $_SESSION['error'] = '削除する権限がありません。';
-            }
-
-            header('Location: /20260630/');
-            exit;
-        }
-    }
-
-    // -------------------------------------------------------------
-    // カリキュラム ＆ 習熟度（%）管理（先生権限）
-    // -------------------------------------------------------------
-
-    // 言語の追加
-    public function addLanguage() {
-        if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_SESSION['role'] === 'teacher') {
-            $language = trim($_POST['language'] ?? '');
-            if (!empty($language)) {
-                $this->curriculumModel->addLanguage($language);
-                $_SESSION['success'] = "新しい学習分野「{$language}」を追加しました。";
-            }
-            header('Location: /20260630/?tab=curriculum-editor');
-            exit;
-        }
-    }
-
-    // タスクの追加
-    public function addTask() {
-        if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_SESSION['role'] === 'teacher') {
-            $language = $_POST['language'] ?? '';
-            $task = trim($_POST['task'] ?? '');
-
-            if (!empty($language) && !empty($task)) {
-                $this->curriculumModel->addTask($language, $task);
-                $_SESSION['success'] = "「{$language}」に新タスク「{$task}」を追加しました。関連生徒に自動通知が送られました。";
-            }
-            header('Location: /20260630/?tab=curriculum-editor');
-            exit;
-        }
-    }
-
-    // 習熟度（%）の査定・更新
-    public function updateProgress() {
-        if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_SESSION['role'] === 'teacher') {
-            $student_id = $_POST['student_id'] ?? '';
-            $language = $_POST['language'] ?? '';
-            $task = $_POST['task'] ?? '';
-            $percent = intval($_POST['percent'] ?? 0);
-
-            if ($percent < 0) $percent = 0;
-            if ($percent > 100) $percent = 100;
-
-            $this->curriculumModel->updateProgressPercent($student_id, $language, $task, $percent);
-
-            // 更新時に生徒へシステム内通知
-            $this->postModel->addNotification(
-                $student_id,
-                "先生があなたのカリキュラム \"{$language} > {$task}\" の習熟度（現在の評価：{$percent}%）を更新しました。",
-                'progress_update'
-            );
-
-            $_SESSION['success'] = "{$student_id} さんの習熟度を {$percent}% に更新し通知しました。";
-            header('Location: /20260630/?tab=analytics');
-            exit;
-        }
-    }
-
-    // 生徒自身の受講言語プロフィールの更新
-    public function updateStudentLanguages() {
-        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $student_id = $_SESSION['user_id'];
-            $selected_languages = $_POST['languages'] ?? [];
-
-            $this->curriculumModel->saveStudentLanguages($student_id, $selected_languages);
-            $_SESSION['success'] = '学習プロフィールを更新しました。カリキュラム初期習熟度(0%)を構成しました。';
-            header('Location: /20260630/');
-            exit;
-        }
-    }
-
-    // 通知の全件既読
-    public function clearNotifications() {
-        $user_id = $_SESSION['user_id'];
-        $this->postModel->markAllAsRead($user_id);
-        $_SESSION['success'] = '通知をすべて既読にしました。';
-        header('Location: /20260630/');
+        header("Location: " . BASE_URL . "dashboard?tab=teacher_config");
         exit;
+    }
+
+    /**
+     * 習熟度（パーセント評価）の入力・更新（先生のみ。更新時、対象生徒へ通知）
+     */
+    public function updateStudentProficiency() {
+        $this->checkAuth();
+        if ($_SESSION['role'] !== 'teacher') exit;
+
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $student_id = intval($_POST['student_id'] ?? 0);
+            $task_id = intval($_POST['task_id'] ?? 0);
+            $percent = intval($_POST['proficiency'] ?? 0);
+
+            if ($student_id > 0 && $task_id > 0) {
+                $this->curriculumModel->updateProficiency($student_id, $task_id, $percent);
+
+                // タスク名と言語名を取得して生徒に通知
+                $db = Database::getConnection();
+                $stmt = $db->prepare("
+                    SELECT ct.task_name, c.name as curr_name
+                    FROM curriculum_tasks ct
+                    JOIN curriculums c ON ct.curriculum_id = c.id
+                    WHERE ct.id = :task_id
+                ");
+                $stmt->execute([':task_id' => $task_id]);
+                $task_info = $stmt->fetch();
+
+                if ($task_info) {
+                    $this->postModel->createNotification(
+                        $student_id,
+                        $_SESSION['user_id'],
+                        'proficiency',
+                        $task_id,
+                        "先生があなたのカリキュラム「{$task_info['curr_name']} ＞ {$task_info['task_name']}」の習熟度を [ {$percent}% ] に更新しました！"
+                    );
+                }
+            }
+        }
+        // 表示していた生徒のコンテキストに戻る
+        header("Location: " . BASE_URL . "dashboard?tab=teacher_students&view_student_id=" . $student_id);
+        exit;
+    }
+
+    private function checkAuth() {
+        if (!isset($_SESSION['user_id'])) {
+            header("Location: " . BASE_URL . "login");
+            exit;
+        }
     }
 }
